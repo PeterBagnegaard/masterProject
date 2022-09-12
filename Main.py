@@ -5,6 +5,7 @@ Created on Tue Apr  5 14:15:01 2022
 
 @author: peter
 """
+from time import perf_counter
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.io import loadmat
@@ -124,63 +125,11 @@ def flat_seabed(n_spline, h_span, seabed_height, noise_fraction=0.):
     noise = v_ax * np.random.randn(n_spline) * noise_fraction
     return (h_ax, v_ax + noise)
 
-def plot_cost_field_1d(ax, cost, axis, axis_0):
-    ax.plot(axis, cost, '.-r', markersize=5)
-    ax.set_ylabel("cost")
-    ax.set_xlabel("Amplitude")
-    ax.axvline(axis_0)
-    
-def plot_cost_field(cost, a_ax, w_ax, a_0, w_0, fig=None):
-    if fig is None:
-        fig, ax = plt.subplots(1, 1)
-    fig.clear()
-    fig.add_subplot()
-    ax = fig.get_axes()[0]
-    j = cost[cost != 0]
-    im = ax.imshow(cost, extent=[w_ax[0], w_ax[-1], a_ax[-1], a_ax[0]], aspect='auto', vmin=j.min(), vmax=j.max())
-    ax.set_xlabel('Wave number')
-    ax.set_ylabel('Amplitude')
-    ax.plot([w_0], [a_0], '*r')
-    plt.colorbar(im)
-    plt.pause(0.01)
-    return fig
-
-def plot_cost_around_thermocline(inversion, true_oceanModel, a_diff=3, w_diff=100, t_diff=100, a_num=12, w_num=12, t_num=12, a_ax_=None, w_ax_=None, t_ax_=None):
-    
-    def get_parameter_ax(p_0, diff, num):
-        half = int(num/2)
-        a = np.linspace(-diff, 0, num=half)
-        b = np.linspace(0, diff, num=num-half+1)
-        return np.concatenate((a, b[1:])) + p_0
-
-    errors = []
-    
-    a_0, w_0, t_0 = true_oceanModel.get_thermocline_state()
-    
-    a_ax = get_parameter_ax(a_0, a_diff, a_num) if a_ax_ is None else a_ax_
-    w_ax = get_parameter_ax(w_0, w_diff, w_num) if w_ax_ is None else w_ax_
-    t_ax = get_parameter_ax(t_0, t_diff, t_num) if t_ax_ is None else t_ax_
-    
-    cost = np.zeros([len(a_ax), len(w_ax)])
-    
-    fig = None
-    for a_idx, a_i in enumerate(a_ax):
-        for w_idx, w_i in enumerate(w_ax):
-            try:
-                state_i = np.array([a_i, w_i, t_0])
-                inversion.set_thermocline_spline(state_i)
-                
-                cost_i = inversion.Cost()
-                cost[a_idx, w_idx] = cost_i
-                
-                print(f"{str((a_idx * len(w_ax) + w_idx + 1) / (len(a_ax) * len(w_ax))*100)[:4]}% | Cost = {cost_i:.4} | ({a_idx}, {w_idx})")
-            except:
-                errors.append([a_idx, a_i, w_idx, w_i])
-                print(f"{str((a_idx * len(w_ax) + w_idx + 1) / (len(a_ax) * len(w_ax))*100)[:4]}% | FAILED | ({a_idx}, {w_idx})")
-
-        fig = plot_cost_field(cost, a_ax, w_ax, a_0, w_0, fig=fig)
-    
-    return cost, errors, fig
+def set_true_seabed(inversion, true_oceanModel, scrample=False):
+    points = true_oceanModel.seabed_spline.seabed_coordinates(True)[1]
+    if scrample:
+        points[5] = 1.1*points[5]
+    inversion.set_seabed_spline(points)
 
 plt.close('all')
 os.chdir('/home/peter/Desktop/master_project/Madagascar/MadClass')
@@ -206,7 +155,7 @@ h1, v1 = flat_seabed(10, _oceanmodel.shape[1], 400, noise_fraction=0.1)
 print("Creating ocean models")
 
 true_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_points=(h1, v1), step_sizes=[0.0007, 0.0007, 0.0005], thermo_depth=250., thermo_amplitude=15., thermo_wave_length=500., verbose=False)
-test_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_points=(h0, v0), step_sizes=[0.0007, 0.0007, 0.0005], thermo_depth=250., thermo_amplitude=15., thermo_wave_length=500., verbose=False)
+test_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_points=(h0, v0), step_sizes=[0.0007, 0.0007, 0.0005], thermo_depth=250., thermo_amplitude=10., thermo_wave_length=400., verbose=False)
 
 true_oceanModel.initialize()
 
@@ -222,73 +171,192 @@ Save oceanmodel figures
 """
 Initialize Inversion class
 """
-inversion = Inversion(test_oceanModel, verbose=False)
+inversion = Inversion(test_oceanModel, verbose=True)
+
 inversion.set_true_data(true_oceanModel)
 inversion.know_the_real_answer(true_oceanModel.seabed_spline, true_oceanModel.get_thermocline_state())
 
+set_true_seabed(inversion, true_oceanModel)
+
 cp_2 = log.checkpoint()
 
+#%%
+t_0 = perf_counter()
+cost, errors, fig, a_ax, w_ax = inversion.plot_cost_around_thermocline(true_oceanModel, a_diff=30, w_diff=800, a_num=12, w_num=22)#, a_ax_=np.linspace(0, 100, num=100))
+cp_3 = log.checkpoint()# 43.6
+dt = perf_counter() - t_0
 
-#cost, errors, fig = plot_cost_around_thermocline(inversion, true_oceanModel, a_diff=15, w_diff=499, a_num=2, w_num=2)#, a_ax_=np.linspace(0, 100, num=100))
+print(dt)
+print(f"{len(a_ax)}, {len(w_ax)} = {len(a_ax) * len(w_ax)}")
+print(dt / (len(a_ax) * len(w_ax)))
+#%%
 
+plt.plot(cost[:, 11], '.:r')
+plt.plot(cost[11, :], '.:b')
+
+
+#%%
+
+# dt = 217
+# a * w = 5 * 5 = 25
+# dt / (a * w) = 8.68
+
+# dt = 67
+# a * w = 3 * 3 = 9
+# dt / (a * w) = 7.48
+
+# dt = 137
+# a * w = 5 * 3 = 15
+# dt / (a * w) = 9.17
+
+# dt = 286
+# a * w = 7 * 7 = 49
+# dt / (a * w) = 5.83
+
+# dt = 141.84794797599898
+# 5, 5 = 25
+# 5.67
+
+# 215.43505610099965
+# 5, 7 = 35
+# 6.15
+N = [25, 9, 15, 49, 25, 35]
+T = [8.682780869840062, 7.488783304332982, 9.174675619066694, 5.834121903918366, 5.673917919039959, 6.155287317171418]
+
+plt.figure()
+plt.plot(N[:3], T[:3], '.r')
+plt.plot(N[3:], T[3:], '.g')
+
+# sec pr hour T
+hr = 60*60
+
+# sec pr pixel t / p
+spp = max(T[3:])
+
+# pixels in an hour In an hour T / (t / p) = T * (p / t) = T / t * p
+print(hr / spp)
+
+# n * n
+print(np.sqrt(hr / spp))
 
 #%%
 print("Beginning inversion!")
 """
 Solve seabed inversely
 """
-best_c, best_model, best_idx, i = inversion.Solve(dv=1., dthermo=.02, alpha_seabed=4*10**6, alpha_thermo=10**4, max_iter=50, min_iter=0, thermocline_iter=60, plot_optimization=True)
+correction = 1.#0.5*10**4
+best_c, best_model, best_idx, i = inversion.Solve(dv=1., dthermo=1., alpha_seabed=correction*4*10**6, alpha_thermo=correction*10**4, max_iter=50, min_iter=0, thermocline_iter=60, plot_optimization=True, only_optimize_thermocline=True)
 
 cp_3 = log.checkpoint()
 print("Ending inversion!")
 
 #%%
-def plot_switching_criteria(inversion):
+#plt.close('all')
+
+data = np.array(inversion.data)
+
+a = data[:, 1]
+da = data[:, 0]
+#da = a[1:] - a[:-1]; a = a[1:]
+w = data[:, 3]
+dw = data[:, 2]
+#dw = w[1:] - w[:-1]; w = w[1:]
+t = data[:, 5]
+dt = data[:, 4]
+dt = dt[t!=0.]
+t = t[t!=0.]
+#dt = t[1:] - t[:-1]; t = t[1:]
+
+
+def plot_thermo_hist(a, da, w, dw,  t, dt):
+    plt.figure()
+    plt.subplot(3, 1, 1)
+    plt.hist(da / a, bins=30)
+    plt.ylabel("Amplitude")
+    plt.subplot(3, 1, 2)
+    plt.hist(dw / w, bins=30)
+    plt.ylabel("Wave length")
+    plt.subplot(3, 1, 3)
+    plt.hist(dt / t, bins=30)
+    plt.ylabel("Time")
+
+def plot_thermo_vs_iteration(a, da, w, dw,  t, dt):
+    plt.figure()
+    plt.subplot(3, 3, 1)
+    plt.plot(a, '.')
+    plt.ylabel("Amplitude")
+    plt.subplot(3, 3, 2)
+    plt.plot(da, '.')
+    plt.subplot(3, 3, 3)
+    plt.plot(da / a, '.')
     
-    def get_S(cs):
-        return np.array([np.std(cs[:i+1]) for i in range(len(cs))])
+    plt.subplot(3, 3, 4)
+    plt.plot(w, '.')
+    plt.ylabel("Wave length")
+    plt.subplot(3, 3, 5)
+    plt.plot(dw, '.')
+    plt.subplot(3, 3, 6)
+    plt.plot(dw / w, '.')
     
-    def get_dS(cs):
-        S = get_S(cs)
-        return diff1d(S)
-    
-    fig, (ax0, ax1, ax2) = plt.subplots(3, 1)
-    fig.tight_layout()
-    fig.subplots_adjust(hspace=0)   
-    
-    cs = np.array(inversion.cs)
-    S = get_S(cs)
-    dS = get_dS(cs)
-    iter_ax = np.arange(len(cs))
-    ok = dS >= 0
-    switch = np.argmin(ok[5:]) + 4
-    
-    ax0.plot(iter_ax, cs, '-r', linewidth=linewidth)
-    ax0.plot(iter_ax[ok], cs[ok], '-g', linewidth=linewidth)
-    ax0.set_ylabel("Error: E(i)",  fontsize=label_fontsize)
-    ax0.axvline(2, linewidth=linewidth/2, color='black', ls=':', label='Initial skipped steps')
-    ax0.axvline(switch, linewidth=linewidth/2, color='black', label='Point of switch')
-    ax0.set_xlim([0, iter_ax.max()])
-    ax1.plot(iter_ax, S, '-r', linewidth=linewidth)
-    ax1.plot(iter_ax[ok], S[ok], '-g', linewidth=linewidth)
-    ax1.set_ylabel("S(i)",  fontsize=label_fontsize)
-#        ax1.set_ylabel("S(i) = std(E(:i))",  fontsize=label_fontsize)
-    ax1.axvline(2, linewidth=linewidth/2, color='black', ls=':')
-    ax1.axvline(switch, linewidth=linewidth/2, color='black')
-    ax1.set_xlim([0, iter_ax.max()])
-    ax2.plot(iter_ax, dS, '-r', linewidth=linewidth)
-    ax2.plot(iter_ax[ok], dS[ok], '-g', linewidth=linewidth)
-    ax2.set_ylabel(r"$\frac{dS}{di}$",  fontsize=title_fontsize)
-    ax2.set_xlabel("Iterations (i)", fontsize=label_fontsize)
-    ax2.axvline(2, linewidth=linewidth/2, color='black', ls=':')
-    ax2.axvline(switch, linewidth=linewidth/2, color='black')
-    ax2.axhline(0, linewidth=linewidth/2, color='black', ls='--')
-    ax2.set_xlim([0, iter_ax.max()])
-    ax0.set_title("Determining switching criteria during optimization", fontsize=title_fontsize)
-    fig.legend(fontsize=label_fontsize)
-    
-    return fig
-plot_switching_criteria(inversion)
+    plt.subplot(3, 3, 7)
+    plt.plot(t, '.')
+    plt.ylabel("Time")
+    plt.subplot(3, 3, 8)
+    plt.plot(dt, '.')
+    plt.subplot(3, 3, 9)
+    plt.plot(dt / t, '.')
+
+plot_thermo_hist(a, da, w, dw,  t, dt)
+plot_thermo_vs_iteration(a, da, w, dw,  t, dt)
+
+
+#%%
+#def cleanup_ratios(ratios, fill_val=None):
+#    ratios = np.array(ratios)
+#    _fill_val = ratios.max() if fill_val is None else fill_val
+#    nan = np.isnan(ratios)
+#    return 
+
+ratios = np.array(inversion.ratio)
+idx = np.isinf(ratios)
+idx_not = ~idx
+ratios[idx] = ratios[idx_not].max()
+ratios[idx] = 0#ratios[idx_not].max()
+        
+for i in range(ratios.shape[1]):
+    plt.subplot(2, 3, i+1)
+    plt.hist(ratios[:, i], bins=20)
+
+for i in range(ratios.shape[1]):
+    plt.subplot(2, 3, i+1+ratios.shape[1])
+    plt.plot(ratios[:, i], '.')
+
+#%%
+a = np.array(inversion.a_list)
+w = np.array(inversion.w_list)
+t = np.array(inversion.t_list)
+
+plt.ylabel("a")
+plt.subplot(3, 3, 1)
+plt.plot(a[:, 0], '.')
+plt.subplot(3, 3, 2)
+plt.plot(a[:, 1], '.')
+plt.subplot(3, 3, 3)
+plt.plot(a[:, 2], '.')
+plt.ylabel("w")
+plt.subplot(3, 3, 4)
+plt.plot(w[:, 0], '.')
+plt.subplot(3, 3, 5)
+plt.plot(w[:, 1], '.')
+plt.subplot(3, 3, 6)
+plt.plot(w[:, 2], '.')
+plt.ylabel("t")
+plt.subplot(3, 3, 7)
+plt.plot(t[:, 0], '.')
+plt.subplot(3, 3, 8)
+plt.plot(t[:, 1], '.')
+plt.subplot(3, 3, 9)
+plt.plot(t[:, 2], '.')
 
 #%%
 """

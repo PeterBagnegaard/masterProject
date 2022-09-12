@@ -743,7 +743,8 @@ class Inversion:
         self.true_seabed = None # This is cheating!
         self.true_thermocline = None # This is also cheating!
         self.verbose = verbose
-
+#        self.ratio = []
+        self.data = []
     @log
     def jacobian_seabed(self, x, dv, cost0):
         # Method
@@ -769,7 +770,7 @@ class Inversion:
         # Initial state
         ai, wi, ti = state
         # Characteristic sizes
-        a0, w0 = self.oceanModel.v_span()*0.1, self.oceanModel.h_span()*0.05
+        a0, w0 = self.oceanModel.v_span(), self.oceanModel.h_span()
 #        a0, w0, t0 = self.thermocline0
         
         # !!! WHY DO I MULTIPLY AND NOT DIVIDE THESE VALUES? !!!
@@ -777,26 +778,39 @@ class Inversion:
         # amplitude
         a_step = a0 * dthermo
         self.oceanModel.set_thermocline_state(ai + a_step, wi, ti)
-        jac[0] = (self.Cost() - cost0) * a_step
+        jac[0] = 0.1 * (self.Cost() - cost0) 
+#        jac[0] = (self.Cost() - cost0) / a_step
+#        jac[0] = (self.Cost() - cost0) * a_step
 
         # wave_length
         w_step = w0 * dthermo
         self.oceanModel.set_thermocline_state(ai, wi + w_step, ti)
-        jac[1] = (self.Cost() - cost0)  * w_step
+        jac[1] = 500. * (self.Cost() - cost0) 
+#        jac[1] = 100. * (self.Cost() - cost0) / w_step
+#        jac[1] = (self.Cost() - cost0)  * w_step
 
         # time (!!!THIS IS A FACTOR 10^4 BIGGER THAN THE OTHER TWO!!!)
         t_step = w0 * dthermo
         self.oceanModel.set_thermocline_state(ai, wi, ti + t_step)
-        jac[2] = (self.Cost() - cost0) * t_step
+        jac[2] = 50. * (self.Cost() - cost0) 
+#        jac[2] = 100. * (self.Cost() - cost0) / t_step
+#        jac[2] = (self.Cost() - cost0) * t_step
+        
+#        self.ratio.append([a_step / ai, w_step / wi, t_step / ti])
+        self.data.append([jac[0], ai, jac[1], wi, jac[2], ti])
         
         self.oceanModel.set_thermocline_state(ai, wi, ti)
         return jac
 
     @log 
-    def Solve(self, dv=1., dthermo=1., alpha_seabed=10**6., alpha_thermo=10**5., max_iter=50, min_iter=2, thermocline_iter=10, plot_optimization=True):
+    def Solve(self, dv=1., dthermo=1., alpha_seabed=10**6., alpha_thermo=10**5., max_iter=50, min_iter=2, transition_iter=4, thermocline_iter=10, plot_optimization=True, only_optimize_thermocline=False):
         # Optimization is split into seabed and thermocline epochs
         optimize_seabed = True
+        transition_phase = False
         optimize_thermocline = False
+        if only_optimize_thermocline:
+            optimize_seabed = False
+            optimize_thermocline = True
         
         # Remember initial conditions
         h0, vi = np.copy(self.oceanModel.seabed_spline.seabed_coordinates(True))
@@ -812,7 +826,7 @@ class Inversion:
         self.cs = [self.Cost()]
         self.inversion_history = [np.concatenate((vi, thermo_i))]
         
-#        for i in range(max_iter):
+        self.print_message("Beginning optimization")
         i = 0
         while i <= max_iter:
             cost = self.Cost()
@@ -821,23 +835,35 @@ class Inversion:
             if optimize_seabed:
                 switch_to_thermocline = self.switching_criteria() or i >= max_iter
                 if switch_to_thermocline and i >= min_iter:
+                    self.print_message("")
+                    self.print_message(f"Switching to Transition after {i} iterations")
                     optimize_seabed = False
-                    optimize_thermocline = True
+                    transition_phase = True
                     self.switch_idx = i
-                    print(f"Switching after {i} iterations")
-                    max_iter = thermocline_iter
                     i = 0
-
-            # Seabed step
-            if optimize_seabed:
+            
+            # Seabed optimization
+            if optimize_seabed or transition_phase:
+                self.print_message(f"Optimizing seabed at idx {i} of {max_iter}")
                 # !!! FORGOT TO DIVIDE BY dv !!!
                 der_seabed = self.jacobian_seabed(vi, dv, cost)
                 new_v = vi - der_seabed * alpha_seabed
                 self.set_seabed_spline(new_v)
 
-            # Thermocline step
+            # In transition between seabed and thermocline optimization
+            if transition_phase and i >= transition_iter:
+                self.print_message("")
+                self.print_message(f"Switching to thermocline optimization after {i} iterations")
+                transition_phase = False
+                optimize_thermocline = True
+                max_iter = thermocline_iter
+                self.select_best_seabed()
+                i = 0
+
+            # Thermocline optimization
             if optimize_thermocline:
-                break #!!!
+                self.print_message(f"Optimizing thermocline at idx {i} of {max_iter}")
+#                break #!!!
                 der_thermo = self.jacobian_thermocline(thermo_i, dthermo, cost)
                 new_t = thermo_i - der_thermo * alpha_thermo
                 self.set_thermocline_spline(new_t)
@@ -862,7 +888,14 @@ class Inversion:
         self.best_model = self.inversion_history[self.best_idx]
         
         return self.best_c, self.best_model, self.best_idx, i
-        
+    
+    @log
+    def select_best_seabed(self):
+        best_idx = np.argmin(self.cs)
+        nbr_seabed_points = len(self.s_horizontal)
+        points = self.inversion_history[best_idx][:nbr_seabed_points]
+        self.set_seabed_spline(points)
+    
     @log
     def switching_criteria(self):    
         if (len(self.cs) < 3):
@@ -964,6 +997,57 @@ class Inversion:
         ax1.legend(fontsize=label_fontsize)
         fig.suptitle("Plot of inversion method", fontsize=title_fontsize)
 
+    def plot_cost_around_thermocline(self, true_oceanModel, a_diff=3, w_diff=100, t_diff=100, a_num=12, w_num=12, t_num=12, a_ax_=None, w_ax_=None, t_ax_=None):
+        
+        def get_parameter_ax(p_0, diff, num):
+            a = np.linspace(0, diff, num=num+1)
+            ax1 = p_0 - a[::-1]
+            ax2 = p_0 + a[1:]
+            return np.concatenate((ax1, ax2))
+    
+        errors = []
+        
+        a_0, w_0, t_0 = true_oceanModel.get_thermocline_state()
+        
+        a_ax = get_parameter_ax(a_0, a_diff, a_num) if a_ax_ is None else a_ax_
+        w_ax = get_parameter_ax(w_0, w_diff, w_num) if w_ax_ is None else w_ax_
+        
+        cost = np.zeros([len(a_ax), len(w_ax)])
+        
+        fig = None
+        for a_idx, a_i in enumerate(a_ax):
+            for w_idx, w_i in enumerate(w_ax):
+                try:
+                    state_i = np.array([a_i, w_i, t_0])
+                    self.set_thermocline_spline(state_i)
+                    
+                    cost_i = self.Cost()
+                    cost[a_idx, w_idx] = cost_i
+                    
+                    print(f"{str((a_idx * len(w_ax) + w_idx + 1) / (len(a_ax) * len(w_ax))*100)[:4]}% | Cost = {cost_i:.4} | (a, w) = ({a_i}, {w_i})")
+                except:
+                    errors.append([a_idx, a_i, w_idx, w_i])
+                    print(f"{str((a_idx * len(w_ax) + w_idx + 1) / (len(a_ax) * len(w_ax))*100)[:4]}% | FAILED | ({a_idx}, {w_idx})")
+    
+            fig = self.plot_cost_field(cost, a_ax, w_ax, a_0, w_0, fig=fig)
+        
+        return cost, errors, fig, a_ax, w_ax
+
+    def plot_cost_field(self, cost, a_ax, w_ax, a_0=None, w_0=None, fig=None):
+        if fig is None:
+            fig, ax = plt.subplots(1, 1)
+        fig.clear()
+        fig.add_subplot()
+        ax = fig.get_axes()[0]
+        j = cost[cost != 0]
+        im = ax.imshow(cost, extent=[w_ax[0], w_ax[-1], a_ax[-1], a_ax[0]], aspect='auto', vmin=j.min(), vmax=j.max())
+        ax.set_xlabel('Wave number')
+        ax.set_ylabel('Amplitude')
+        ax.plot([w_0], [a_0], '*r', label='True value')
+        plt.colorbar(im)
+        plt.pause(0.01)
+        return fig
+
 #        if len(self.cs) == 0:
 #            raise Exception("No inversion history found!")
 #            
@@ -997,13 +1081,15 @@ class Inversion:
         # !!!This shouldn't be sqrt!!!
         test_data = self.get_TOA()
         diff = test_data - self.true_toa
-#        return np.sum(diff ** 2)
-        return np.sqrt( np.sum(diff ** 2) )
+        cost = np.sum(diff ** 2)
+        sqrt_cost = np.sqrt(cost)
+        return sqrt_cost
     
     @log
     def get_TOA(self):
         if (self.oceanModel.is_initialized):
-            self.print_message("Internal model already initialized")
+#            self.print_message("Internal model already initialized")
+            pass
         else:
             self.print_message("Initializing internal model")
             self.oceanModel.initialize()
@@ -1017,6 +1103,7 @@ class Inversion:
         self.oceanModel.is_initialized = is_initialized
 #        self.set_velocity( self.oceanModel.oceanmodel_from_spline(self.water_speed, self.ground_speed) )
         
+    @log
     def set_thermocline_spline(self, state, is_initialized=False):
         self.oceanModel.set_thermocline_state(*state)
         self.oceanModel.is_initialized = is_initialized
@@ -1054,7 +1141,8 @@ class Inversion:
     @log
     def set_data_from_OceanModel(self, oceanModel):
         self.print_message("Setting true data from model")
-        oceanModel.initialize()
+        if not oceanModel.is_initialized:
+            oceanModel.initialize()
         self.true_toa = oceanModel.TOA()
                 
     @log
@@ -1160,8 +1248,6 @@ class OceanModel:
         self.speed_below = speed_below
         self.thermocline_spline = ThermoclineSpline(self.oceanmodel.shape[1], depth=thermo_depth, amplitude=thermo_amplitude, wave_length=thermo_wave_length, time_offset=thermo_time)
         # Internal variables        
-        self.source_names = []
-        self.receiver_names = []
         self.T = None
         self.order = 2
         self.h_list = []
@@ -1497,3 +1583,5 @@ class OceanModel:
 
 if __name__=='__main__':
     print("Dude, you're running your library, dummy!")
+else:
+    print("Successfully loaded library")
