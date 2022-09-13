@@ -87,6 +87,11 @@ def clean_rsf_deep():
     os.chdir(cur_dir)
     return rsf_files    
 
+def get_sigma_matrix(oceanModel, sigma=10**-6):
+    ns = len(oceanModel.sources)
+    nr = len(oceanModel.receivers)
+    return np.ones(ns * nr) * sigma
+
 def get_true_data():
     """
     Load OceanModel.mat to np array
@@ -171,7 +176,7 @@ Save oceanmodel figures
 """
 Initialize Inversion class
 """
-inversion = Inversion(test_oceanModel, verbose=True)
+inversion = Inversion(test_oceanModel, sigmas=get_sigma_matrix(true_oceanModel), verbose=True)
 
 inversion.set_true_data(true_oceanModel)
 inversion.know_the_real_answer(true_oceanModel.seabed_spline, true_oceanModel.get_thermocline_state())
@@ -182,17 +187,13 @@ cp_2 = log.checkpoint()
 
 #%%
 t_0 = perf_counter()
-cost, errors, fig, a_ax, w_ax = inversion.plot_cost_around_thermocline(true_oceanModel, a_diff=30, w_diff=800, a_num=12, w_num=22)#, a_ax_=np.linspace(0, 100, num=100))
+cost, errors, fig, a_ax, w_ax = inversion.plot_cost_around_thermocline(true_oceanModel, a_diff=20, w_diff=200, a_num=5, w_num=5)#, a_ax_=np.linspace(0, 100, num=100))
 cp_3 = log.checkpoint()# 43.6
 dt = perf_counter() - t_0
 
 print(dt)
 print(f"{len(a_ax)}, {len(w_ax)} = {len(a_ax) * len(w_ax)}")
 print(dt / (len(a_ax) * len(w_ax)))
-#%%
-
-plt.plot(cost[:, 11], '.:r')
-plt.plot(cost[11, :], '.:b')
 
 
 #%%

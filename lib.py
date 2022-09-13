@@ -363,8 +363,6 @@ def get_thermocline_point(oceanModel, eikonal):
     v_min = v_ax[np.argmin(t_ax)]
     return h_min, v_min
 
-
-
 @log
 def plot_travel_routes(oceanModel, source_ids, receiver_ids, title=None):
     print("??plot_travel_routes??")
@@ -398,7 +396,6 @@ def plot_travel_routes(oceanModel, source_ids, receiver_ids, title=None):
                 
 @log
 def plot_oceanModel(oceanModel, title=None, jacobian=None):
-    print("??plot_oceanModel??")
     sources = oceanModel.coordinates2index(oceanModel.sources)
     receivers = oceanModel.coordinates2index(oceanModel.receivers)
     
@@ -432,6 +429,7 @@ def plot_oceanModel(oceanModel, title=None, jacobian=None):
     ax.set_ylabel("Depth", fontsize=label_fontsize)
     ax.set_xlabel("Horizontal distance", fontsize=label_fontsize)
     ax.legend(fontsize=label_fontsize)
+    ax.invert_yaxis()
     fig.tight_layout()
     return fig
 
@@ -474,6 +472,9 @@ def plot_source_receiver(oceanmodel, source, receiver, source_point, receiver_po
     ax2.set_xlim([0, hspan])
     
     fig.colorbar(im1, ax=[ax1, ax2], orientation='vertical').set_label(label="Time of arrival", size=label_fontsize)
+    ax0.invert_yaxis()
+    ax1.invert_yaxis()
+    ax2.invert_yaxis()
     ax0.legend()
     return fig
 
@@ -731,13 +732,13 @@ Inversion
 class Inversion:
     
     @log
-    def __init__(self, oceanModel, dv_jacobian=1., verbose=True):#, verbose_plot_progress=True):
+    def __init__(self, oceanModel, sigmas=None, verbose=True):#, verbose_plot_progress=True):
         # Settable variables
         self.oceanModel = oceanModel
         self.s_horizontal = oceanModel.seabed_spline.horizontal_0
         self.cs = []
         self.inversion_history = []
-        self.dv_jacobian = dv_jacobian
+        self.covariance_inv = self.get_covariance_inv(sigmas)
         # Internal variables
         self.true_toa = None
         self.true_seabed = None # This is cheating!
@@ -745,6 +746,13 @@ class Inversion:
         self.verbose = verbose
 #        self.ratio = []
         self.data = []
+        
+    @log
+    def get_covariance_inv(self, sigmas):
+        variance = np.diag(sigmas ** 2)
+        return np.linalg.inv(variance)
+        
+        
     @log
     def jacobian_seabed(self, x, dv, cost0):
         # Method
@@ -773,7 +781,7 @@ class Inversion:
         a0, w0 = self.oceanModel.v_span(), self.oceanModel.h_span()
 #        a0, w0, t0 = self.thermocline0
         
-        # !!! WHY DO I MULTIPLY AND NOT DIVIDE THESE VALUES? !!!
+        # !!! WHY DO I MULTIPLY AND NOT DIVIDE THESE VALUES?
 
         # amplitude
         a_step = a0 * dthermo
@@ -789,7 +797,7 @@ class Inversion:
 #        jac[1] = 100. * (self.Cost() - cost0) / w_step
 #        jac[1] = (self.Cost() - cost0)  * w_step
 
-        # time (!!!THIS IS A FACTOR 10^4 BIGGER THAN THE OTHER TWO!!!)
+        # time
         t_step = w0 * dthermo
         self.oceanModel.set_thermocline_state(ai, wi, ti + t_step)
         jac[2] = 50. * (self.Cost() - cost0) 
@@ -845,7 +853,6 @@ class Inversion:
             # Seabed optimization
             if optimize_seabed or transition_phase:
                 self.print_message(f"Optimizing seabed at idx {i} of {max_iter}")
-                # !!! FORGOT TO DIVIDE BY dv !!!
                 der_seabed = self.jacobian_seabed(vi, dv, cost)
                 new_v = vi - der_seabed * alpha_seabed
                 self.set_seabed_spline(new_v)
@@ -863,7 +870,6 @@ class Inversion:
             # Thermocline optimization
             if optimize_thermocline:
                 self.print_message(f"Optimizing thermocline at idx {i} of {max_iter}")
-#                break #!!!
                 der_thermo = self.jacobian_thermocline(thermo_i, dthermo, cost)
                 new_t = thermo_i - der_thermo * alpha_thermo
                 self.set_thermocline_spline(new_t)
@@ -1078,13 +1084,13 @@ class Inversion:
         
     @log
     def Cost(self):
-        # !!!This shouldn't be sqrt!!!
         test_data = self.get_TOA()
-        diff = test_data - self.true_toa
-        cost = np.sum(diff ** 2)
-        sqrt_cost = np.sqrt(cost)
-        return sqrt_cost
-    
+        diff = (test_data - self.true_toa).reshape([1, -1])
+        return (diff @ self.covariance_inv @ diff.T)[0, 0]
+#        cost = np.sum(diff ** 2)
+#        sqrt_cost = np.sqrt(cost)
+#        return sqrt_cost
+#    
     @log
     def get_TOA(self):
         if (self.oceanModel.is_initialized):
@@ -1356,11 +1362,11 @@ class OceanModel:
         return np.array([a, w, t])
     
     @log
-    def set_thermocline_state(self, a, w, t):
-        self.thermocline_spline.amplitude = a
-        self.thermocline_spline.wave_length = w
-        self.thermocline_spline.time_offset = t
-        self.is_initialized = False
+#    def set_thermocline_state(self, a, w, t):
+#        self.thermocline_spline.amplitude = a
+#        self.thermocline_spline.wave_length = w
+#        self.thermocline_spline.time_offset = t
+#        self.is_initialized = False
 
     @log
     def write_SConstruck(self):
