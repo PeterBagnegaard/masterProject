@@ -1031,9 +1031,10 @@ class Inversion:
                     cost[a_idx, w_idx] = cost_i
                     
                     print(f"{str((a_idx * len(w_ax) + w_idx + 1) / (len(a_ax) * len(w_ax))*100)[:4]}% | Cost = {cost_i:.4} | (a, w) = ({a_i}, {w_i})")
-                except:
+                except Exception as e:
                     errors.append([a_idx, a_i, w_idx, w_i])
                     print(f"{str((a_idx * len(w_ax) + w_idx + 1) / (len(a_ax) * len(w_ax))*100)[:4]}% | FAILED | ({a_idx}, {w_idx})")
+                    print(e)
     
             fig = self.plot_cost_field(cost, a_ax, w_ax, a_0, w_0, fig=fig)
         
@@ -1347,7 +1348,7 @@ class OceanModel:
         for i, t in enumerate(self.times):
             self.set_source_time(t)
             numpy2rsf(self.oceanmodel, self.cwd, f'OceanModel{i}')
-        self.print_message(f"Successfully wrote OceanModel.rsf files")
+        self.print_message("Successfully wrote OceanModel.rsf files")
 
     @log
     def set_source_time(self, t):
@@ -1360,13 +1361,13 @@ class OceanModel:
         w = self.thermocline_spline.wave_length
         t = self.thermocline_spline.time_offset
         return np.array([a, w, t])
-    
+
     @log
-#    def set_thermocline_state(self, a, w, t):
-#        self.thermocline_spline.amplitude = a
-#        self.thermocline_spline.wave_length = w
-#        self.thermocline_spline.time_offset = t
-#        self.is_initialized = False
+    def set_thermocline_state(self, a, w, t):
+        self.thermocline_spline.amplitude = a
+        self.thermocline_spline.wave_length = w
+        self.thermocline_spline.time_offset = t
+        self.is_initialized = False
 
     @log
     def write_SConstruck(self):

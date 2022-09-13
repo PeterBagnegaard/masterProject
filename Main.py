@@ -187,14 +187,13 @@ cp_2 = log.checkpoint()
 
 #%%
 t_0 = perf_counter()
-cost, errors, fig, a_ax, w_ax = inversion.plot_cost_around_thermocline(true_oceanModel, a_diff=20, w_diff=200, a_num=5, w_num=5)#, a_ax_=np.linspace(0, 100, num=100))
-cp_3 = log.checkpoint()# 43.6
+cost, errors, fig, a_ax, w_ax = inversion.plot_cost_around_thermocline(true_oceanModel, a_diff=20, w_diff=200, a_num=2, w_num=2)#, a_ax_=np.linspace(0, 100, num=100))
+cp_3 = log.checkpoint()
 dt = perf_counter() - t_0
 
 print(dt)
 print(f"{len(a_ax)}, {len(w_ax)} = {len(a_ax) * len(w_ax)}")
-print(dt / (len(a_ax) * len(w_ax)))
-
+print(f"{len(a_ax) * len(w_ax)} iterations of {dt / (len(a_ax) * len(w_ax)):.3}s took {dt/60:.3}m in total")
 
 #%%
 
