@@ -11,20 +11,54 @@ import numpy as np
 from scipy.io import loadmat
 from scipy.ndimage import gaussian_filter
 import os
-from lib import (numpy2rsf, 
-                 rsf2numpy, 
-                 create_hist, 
-                 extremum, 
-                 fix_comma_problem, 
-                 ThermoclineSpline,
-                 plot_source_receiver, 
-                 plot_time, 
-                 SeabedSpline,
-                 write_file,
-                 OceanModel,
+import pickle
+from lib import (OceanModel,
                  Inversion,
                  log
                  )
+
+def save_res(params, time_list, cs_list, inversion_history_list, errors, folder_name='experiment_v_0.01_2.5_a_0.001_9'):
+    path = "/home/peter/Desktop/master_project/Madagascar/solve_res/"
+    content = os.listdir(path)
+    if folder_name in content:
+        raise Exception (f"Folder {folder_name} already exists!")
+    
+    os.mkdir(path + folder_name)
+
+    with open(path + folder_name + "/params", "wb") as fp:   #Pickling
+        pickle.dump(params, fp)
+    
+    with open(path + folder_name + "/time_list", "wb") as fp:   #Pickling
+        pickle.dump(time_list, fp)
+    
+    with open(path + folder_name + "/cs_list", "wb") as fp:   #Pickling
+        pickle.dump(cs_list, fp)
+    
+    with open(path + folder_name + "/inversion_history_list", "wb") as fp:   #Pickling
+        pickle.dump(inversion_history_list, fp)
+    
+    with open(path + folder_name + "/errors", "wb") as fp:   #Pickling
+        pickle.dump(errors, fp)
+
+def cost_around_true_thermocline(diff=10, num=50):
+    dv = np.linspace(-diff, diff, num=num)
+    v = true_oceanModel.seabed_spline.coordinates()[1]
+    data = np.zeros([len(v), len(dv)])
+    
+    for i, v_i in enumerate(v):
+        for j, dv_j in enumerate(dv):
+            new_v = np.copy(v)
+            new_v[i] = v[i] + dv_j
+            
+            inversion.set_spline(new_v, target="seabed")
+            data[i, j] = inversion.Cost()
+            
+            plt.clf()
+            plt.imshow(data, aspect='auto', extent=[dv.min(), dv.max(), v.min(), v.max()])
+            plt.colorbar()
+            plt.title(f"i, j = {i}, {j}")
+            plt.pause(0.01)
+    return data
 
 def compare_ocean_models(true_oceanModel, test_oceanModel):
     true_thermo = true_oceanModel.get_thermocline_state()
@@ -48,9 +82,15 @@ def compare_ocean_models(true_oceanModel, test_oceanModel):
 def save_inversion_figures(inversion):
     figa = inversion.plot_switching_criteria()
     manager = plt.get_current_fig_manager(); manager.full_screen_toggle()
-    
+    figb = inversion.plot_inversion_history()
+    manager = plt.get_current_fig_manager(); manager.full_screen_toggle()
+    figc = inversion.plot_inversion_history_2()
+    manager = plt.get_current_fig_manager(); manager.full_screen_toggle()
+        
     plt.pause(2)
     figa.savefig('Switching_criteria.png', bbox_inches='tight',pad_inches = 0)
+    figb.savefig('plot_inversion_history.png', bbox_inches='tight',pad_inches = 0)
+    figc.savefig('plot_inversion_history_2.png', bbox_inches='tight',pad_inches = 0)
 
 def save_oceanmodel_figures(oceanModel, n_idx=0, r_idx=9):
     figa = oceanModel.plot_oceanmodel()
@@ -92,13 +132,13 @@ def get_sigma_matrix(oceanModel, sigma=10**-6):
     nr = len(oceanModel.receivers)
     return np.ones(ns * nr) * sigma
 
-def get_true_data():
-    """
-    Load OceanModel.mat to np array
-    """
-    _true_oceanmodel = loadmat('OceanModel.mat')['OceanModel'].astype(np.float32)
-    _true_oceanmodel = gaussian_filter(_true_oceanmodel, 5)
-    return _true_oceanmodel
+#def get_true_data():
+#    """
+#    Load OceanModel.mat to np array
+#    """
+#    _true_oceanmodel = loadmat('OceanModel.mat')['OceanModel'].astype(np.float32)
+#    _true_oceanmodel = gaussian_filter(_true_oceanmodel, 5)
+#    return _true_oceanmodel
 
 def get_uniform_field(_true_oceanmodel, speed=1500.):
     """
@@ -124,17 +164,27 @@ def get_slope(oceanmodel, a, b):
         oceanmodel[int(y):, int(x)] = 4000.
     return oceanmodel
 
-def flat_seabed(n_spline, h_span, seabed_height, noise_fraction=0.):
+def flat_noisy_coordinates(n_spline, h_span, seabed_height, noise_fraction=0.):
     h_ax = np.linspace(0, h_span, num=n_spline) #
     v_ax = np.ones_like(h_ax) * seabed_height
-    noise = v_ax * np.random.randn(n_spline) * noise_fraction
+    noise = v_ax * np.random.randn(n_spline) * float(noise_fraction)
     return (h_ax, v_ax + noise)
 
 def set_true_seabed(inversion, true_oceanModel, scrample=False):
-    points = true_oceanModel.seabed_spline.seabed_coordinates(True)[1]
+    points = true_oceanModel.seabed_spline.coordinates()[1]
     if scrample:
         points[5] = 1.1*points[5]
-    inversion.set_seabed_spline(points)
+    inversion.set_spline(points, target='seabed')
+
+def get_true_seabed(noise=0.01):
+    h = np.array([   0.        ,  220.55555556,  441.11111111,  661.66666667,
+             882.22222222, 1102.77777778, 1323.33333333, 1543.88888889,
+            1764.44444444, 1985.        ])
+    v = np.array([376.07856812, 437.47310362, 405.49548887, 399.50116633,
+            393.17192563, 357.28176729, 421.62255262, 378.05737762,
+            383.66654188, 392.45178946])
+    v_noise = np.random.randn(len(v)) * float(noise) * v.mean()
+    return h, v, v + v_noise
 
 plt.close('all')
 os.chdir('/home/peter/Desktop/master_project/Madagascar/MadClass')
@@ -147,25 +197,91 @@ log.log_function_counts_mode = True
 Create OceanModel Classes
 coordinates [horizontal, vertical]
 """
+
 _oceanmodel = get_uniform_field([500, 1985])
 
 sources   = [[i, 0.1] for i in np.linspace(0.1, 1.3, num=10)]
 receivers = [[i, 0.1] for i in np.linspace(0.1, 1.3, num=10)+0.05]
 times = np.linspace(0, 20, num=len(sources))
 
-h0, v0 = flat_seabed(10, _oceanmodel.shape[1], 400, noise_fraction=0. )
-h1, v1 = flat_seabed(10, _oceanmodel.shape[1], 400, noise_fraction=0.1)
-#h1, v1 = np.copy(h0), np.array([400., 400., 400., 380., 400., 410., 370., 400., 400., 400.])
+seabed_true = flat_noisy_coordinates(10, _oceanmodel.shape[1], 400, noise_fraction=0.1 )
+seabed_test = flat_noisy_coordinates(10, _oceanmodel.shape[1], 400, noise_fraction=0)
+#h, v, v_n = get_true_seabed(noise=0.1)
+
+thermocline_true = flat_noisy_coordinates(10, _oceanmodel.shape[1], 200, noise_fraction=0)
+thermocline_test = flat_noisy_coordinates(10, _oceanmodel.shape[1], 200, noise_fraction=0)
 
 print("Creating ocean models")
 
-true_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_points=(h1, v1), step_sizes=[0.0007, 0.0007, 0.0005], thermo_depth=250., thermo_amplitude=15., thermo_wave_length=500., verbose=False)
-test_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_points=(h0, v0), step_sizes=[0.0007, 0.0007, 0.0005], thermo_depth=250., thermo_amplitude=10., thermo_wave_length=400., verbose=False)
+#true_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_seabed_points=(h, v  ), hv_thermocline_points=thermocline_true, step_sizes=[0.0007, 0.0007, 0.0005], verbose=False)
+#test_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_seabed_points=(h, v_n), hv_thermocline_points=thermocline_test, step_sizes=[0.0007, 0.0007, 0.0005], verbose=False, save_optimization=True)
+true_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_seabed_points=seabed_true, hv_thermocline_points=thermocline_true, step_sizes=[0.0007, 0.0007, 0.0005], verbose=False)
+test_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_seabed_points=seabed_test, hv_thermocline_points=thermocline_test, step_sizes=[0.0007, 0.0007, 0.0005], verbose=False, save_optimization=True)
 
 true_oceanModel.initialize()
 
 cp_1 = log.checkpoint()
 print("Ocean models created")
+
+
+
+#%%
+"""
+Initialize Inversion class
+"""
+inversion = Inversion(test_oceanModel, true_oceanModel, sigmas=get_sigma_matrix(true_oceanModel), verbose=True)
+
+inversion.know_the_real_answer(true_oceanModel)
+
+
+#%%
+m_i = inversion.oceanModel.seabed_spline.coordinates()[1]
+
+G = inversion.get_G(m_i, 3.)
+
+C_M = np.diag(np.ones_like(m_i))
+C_D = inversion.C_D
+C_D_inv = inversion.C_D_inv
+
+d_d = inversion.get_TOA() - inversion.true_toa
+d_m = inversion.m_i() - inversion.m_priori
+#%%
+T = G.T @ C_D_inv
+T_0 = T @ G
+T_1 = T @ d_d
+T_2 = np.linalg.inv(C_M) @ d_m
+T_3 = np.linalg.inv(T_0 + C_M)
+T_4 = T_1 + T_2
+res = T_3 @ T_4
+
+
+#%%
+"""
+Find G
+"""
+#def get_G():
+def get_G(self, m_i, dv, cost0, target='seabed'):
+    dv_ax = np.zeros_like(m_i)
+    G = np.zeros([len(self.true_toa.copy()), len(m_i)])
+    for i in range(len(m_i)):
+        dv_ax[i-1] = 0.
+        dv_ax[i] = dv
+        m_new = m_i + dv_ax
+        self.set_spline(m_new, target=target)
+        d_i = self.oceanModel.TOA()
+        G[:, i] = d_i - self.true_toa.copy()
+    
+
+
+
+#%%
+"""
+Solve inversion problem
+"""
+best_c, best_model, best_idx, i = inversion.Solve(variation_seabed=1, variation_thermocline=1, alpha_seabed=.03, alpha_thermo=0.05, seabed_iter=50, thermocline_iter=30, transition_iter=15, min_iter=3, plot_optimization=True, only_optimize_thermocline=False)
+
+
+#%%
 
 """
 Save oceanmodel figures 
@@ -174,189 +290,258 @@ Save oceanmodel figures
 
 #%%
 """
-Initialize Inversion class
+Find best combination of variation_seabed and alpha_seabed
+
+function (variation_seabed, alpha_seabed)
+    return cs and inversion_history
+    
+
+[variation_seabed=0.16625, alpha=0.5635] => Cost = 14.158914
 """
-inversion = Inversion(test_oceanModel, sigmas=get_sigma_matrix(true_oceanModel), verbose=True)
+def save_List(inversion, name):
+    lines = [str(line) + '\n' for line in inversion.oceanModel.List]
+    file = '/home/peter/Desktop/master_project/Madagascar/solve_res/List/' + name
+    with open(file, 'a') as f:
+        f.writelines(lines)
+    inversion.oceanModel.List.clear()
+    
+def solve_res(variation_seabed, alpha_seabed, seabed_iter=50, transition_iter=15):
+    # Create new true oceanModel
+    true_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_seabed_points=flat_noisy_coordinates(10, _oceanmodel.shape[1], 400, noise_fraction=0.1 ), hv_thermocline_points=thermocline_true, step_sizes=[0.0007, 0.0007, 0.0005], verbose=False)
+    # Initialize
+    inversion = Inversion(test_oceanModel, true_oceanModel, sigmas=get_sigma_matrix(true_oceanModel), verbose=True)
+    inversion.know_the_real_answer(true_oceanModel)
+    t_0 = perf_counter()
 
-inversion.set_true_data(true_oceanModel)
-inversion.know_the_real_answer(true_oceanModel.seabed_spline, true_oceanModel.get_thermocline_state())
+    # Run simulation
+    inversion.Solve(variation_seabed=variation_seabed, variation_thermocline=1, alpha_seabed=alpha_seabed, alpha_thermo=0.05, seabed_iter=seabed_iter, thermocline_iter=30, transition_iter=transition_iter, min_iter=3, plot_optimization=False, only_optimize_thermocline=False)
+    
+    # Save data
+    time_list.append(perf_counter() - t_0)
+    inversion_history_list.append(inversion.inversion_history)
+    cs_list.append(inversion.cs)
+    params.append([variation_seabed, alpha_seabed])
+    # Restore to initial state
+    inversion.inversion_history = []
+    inversion.cs = []
+    inversion.switch_idx = 0
+    inversion.set_spline(seabed_initial)
+    save_List(inversion, "v_" + str(variation_seabed) + "_a_" + str(alpha_seabed))
 
-set_true_seabed(inversion, true_oceanModel)
 
+seabed_initial = np.copy(test_oceanModel.seabed_spline.coordinates()[1])
+params = []
+time_list = [] # 472 on average
+cs_list = []
+inversion_history_list = []
+errors = []
+
+variation_seabed_ax = 10 ** np.linspace(0, 0.7, num=7)
+alpha_seabed_ax = 10 ** np.linspace(-1.4, -0.9, num=11)
+
+for i, variation_seabed in enumerate(variation_seabed_ax):
+    for j, alpha_seabed in enumerate(alpha_seabed_ax):
+        try:
+            print("==========================")
+            print(f"{(len(variation_seabed_ax) * i + j) / (len(variation_seabed_ax) * len(alpha_seabed_ax)) * 100}%")
+            print(f"{variation_seabed=}")
+            print(f"{alpha_seabed=}")
+            solve_res(variation_seabed, alpha_seabed)
+            print(f"{len(cs_list[-1])} iterations took {time_list[-1]:.3}s")
+            print("==========================")
+        except Exception as ex:
+            errors.append([[variation_seabed, alpha_seabed], ex])
+        
+
+
+save_res(params, time_list, cs_list, inversion_history_list, errors, folder_name='full_experiment_v_0.03_0.3_a_0.3_6.3')
+
+
+#%%
+
+
+
+#%%
+def get_best_cs(cs_list):
+    return np.array([min(cs) for cs in cs_list])
+#    return np.array([cs[-1] for cs in cs_list])
+
+def plot_best_cs(best_cs, ax=None, threshold=-1):
+    A, V = np.meshgrid(alpha_seabed_ax, variation_seabed_ax)
+    best_cs = best_cs.reshape([len(variation_seabed_ax), len(alpha_seabed_ax)])
+#    best_cs = get_best_cs(cs_list).reshape([len(variation_seabed_ax), len(alpha_seabed_ax)])
+    
+    if threshold != -1:
+        include = best_cs < threshold
+        best_cs = best_cs * include + threshold * ~include
+    
+    if ax is None:
+        _, ax = plt.subplots(1, 1)
+    contour = ax.contourf(A, V, np.log10(best_cs))
+    ax.figure.colorbar(contour)
+    ax.set_ylabel("variation seabed")
+    ax.set_xlabel("alpha seabed")
+    return ax
+
+
+def get_std(List, tail=5):
+    return np.array([np.std(element[-tail:]) for element in List])
+
+def get_std_of_seabed(inversion_history_list, s_true, mask=1, tail=3):
+    def get_sqared_difference(e, s_true, mask):
+        diff = e[mask:(10-mask)] - s_true[mask:(10-mask)]
+        return np.sum(diff**2)
+    
+#    s_true = true_oceanModel.seabed_spline.coordinates()[1]
+    
+    diffs = np.zeros(len(inversion_history_list))
+    for i, ih in enumerate(inversion_history_list):
+        elements = ih[-tail:]
+        diffs[i] = np.std([get_sqared_difference(e, s_true, mask) for e in elements])
+    return diffs
+
+def plot_seabed_mismatch(diffs, s_true, mask=1):
+    
+#    s_true = true_oceanModel.seabed_spline.coordinates()[1]
+#    diffs = np.array([ih[-1][mask:(10-mask)] - s_true[mask:(10-mask)] for ih in inversion_history_list])
+    
+    misfits = np.sum(diffs**2, axis=1)
+    mistfit_stds = get_std_of_seabed(inversion_history_list, s_true, mask=mask)
+    
+    
+    fig, ax = plt.subplots(1, 1) 
+    for i, (param, color) in enumerate(zip(variation_seabed_ax, colors[:n])):
+        misfits_i = misfits[i*n:(i+1)*n]    
+        sigma_i = mistfit_stds[i*n:(i+1)*n]
+        ax.errorbar(alpha_seabed_ax, misfits_i, yerr=sigma_i, label=f"Variation = {param:.3}", linewidth=2)
+    ax.set_yscale('log')
+    ax.set_xscale('log')
+    ax.set_xlabel("Alpha")
+    ax.set_ylabel("sum(true - estmiate)^2")
+    ax.set_title("Error from true seabed vs alpha and variations")
+    plt.legend()
+
+def plot_misfit(cs, sigma_cs):
+#    cs = get_best_cs(cs_list)
+#    sigma_cs = get_std(cs_list)
+    
+    fig, ax = plt.subplots(1, 1) 
+    for i, (param, color) in enumerate(zip(variation_seabed_ax, colors[:n])):
+        cs_i = cs[i*n:(i+1)*n]
+        sigma_i = sigma_cs[i*n:(i+1)*n]
+        ax.plot(alpha_seabed_ax, cs_i, label=f"Variation = {param:.3}", linewidth=2)
+    #    ax.errorbar(alpha_seabed_ax, cs_i, yerr=sigma_i, label=f"Variation = {param:.3}")
+    ax.set_yscale('log')
+    ax.set_xscale('log')
+    ax.set_xlabel("Alpha")
+    ax.set_ylabel("Misfit")
+    ax.set_title("Misfit cs alpha and variations")
+    plt.legend()
+
+def plot_10_best_optimizations():
+    fig, (ax_1d, ax_2d) = plt.subplots(1, 2)
+    
+    plot_best_cs(cs, ax_2d)
+    
+    #for i, (cs_i, color) in enumerate(zip(cs_sorted[:len(colors)], colors)):
+    for i, color in zip(np.argsort(cs), colors):
+        cs_i = cs_list[i]
+        h, v = params[i]
+        ax_1d.clear()
+        ax_1d.semilogy(cs_i, color=color)
+        ax_2d.plot(v, h, '*', color=color)
+        plt.pause(1)
+    
+
+def plot_inversion_i(i, pause=0.1):
+    v, a = params[best_idx]
+    history_best = inversion_history_list[best_idx]
+    cs_best = cs_list[best_idx]
+    
+    fig, (ax0, ax1, ax2) = plt.subplots(1, 3)
+    ax0.plot(h_true, s_true, '-b')
+    fig.suptitle(f"Variation {v:.4}, Alpha {a:.4}")
+    for point, color in zip(s_true, colors):
+        print(point)
+        ax2.axhline(point, color=color)
+        
+    for i, (history_i, cs_i) in enumerate(zip(history_best, cs_best)):
+        
+        ax0.plot(h_true, history_i[:len(h_true)], '.r', alpha = (i+1) / len(cs_best))
+        ax1.semilogy(i, cs_i, '.k')
+        plt.pause(pause)
+        ax0.plot(h_true, history_i[:len(h_true)], '.k', alpha = ((i+1) / len(cs_best))**2)
+        
+        for point, color in zip(history_i, colors):
+            ax2.plot(i, point, '.', color=color)
+        
+colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+n = len(alpha_seabed_ax)
+
+#%%
+
+#%%
+
+
+#%%
+"""
+Plot of misfit
+"""
+mask = 1
+#best_cs = get_best_cs(cs_list).reshape([len(variation_seabed_ax), len(alpha_seabed_ax)])
+cs = get_best_cs(cs_list)
+sigma_cs = get_std(cs_list)
+h_true, s_true = true_oceanModel.seabed_spline.coordinates()
+diffs = np.array([ih[-1][mask:(10-mask)] - s_true[mask:(10-mask)] for ih in inversion_history_list])
+best_idx = np.argmin(cs)
+
+plt.close('all')
+
+plot_seabed_mismatch(diffs, s_true)
+
+plot_misfit(cs, sigma_cs)
+    
+plot_best_cs(cs)
+
+plot_10_best_optimizations()
+
+plot_inversion_i(best_idx)
+
+#%%
+
+
+#%%
+"""
+Solve inversion problem
+"""
 cp_2 = log.checkpoint()
 
-#%%
-t_0 = perf_counter()
-cost, errors, fig, a_ax, w_ax = inversion.plot_cost_around_thermocline(true_oceanModel, a_diff=20, w_diff=200, a_num=2, w_num=2)#, a_ax_=np.linspace(0, 100, num=100))
-cp_3 = log.checkpoint()
-dt = perf_counter() - t_0
-
-print(dt)
-print(f"{len(a_ax)}, {len(w_ax)} = {len(a_ax) * len(w_ax)}")
-print(f"{len(a_ax) * len(w_ax)} iterations of {dt / (len(a_ax) * len(w_ax)):.3}s took {dt/60:.3}m in total")
-
-#%%
-
-# dt = 217
-# a * w = 5 * 5 = 25
-# dt / (a * w) = 8.68
-
-# dt = 67
-# a * w = 3 * 3 = 9
-# dt / (a * w) = 7.48
-
-# dt = 137
-# a * w = 5 * 3 = 15
-# dt / (a * w) = 9.17
-
-# dt = 286
-# a * w = 7 * 7 = 49
-# dt / (a * w) = 5.83
-
-# dt = 141.84794797599898
-# 5, 5 = 25
-# 5.67
-
-# 215.43505610099965
-# 5, 7 = 35
-# 6.15
-N = [25, 9, 15, 49, 25, 35]
-T = [8.682780869840062, 7.488783304332982, 9.174675619066694, 5.834121903918366, 5.673917919039959, 6.155287317171418]
-
-plt.figure()
-plt.plot(N[:3], T[:3], '.r')
-plt.plot(N[3:], T[3:], '.g')
-
-# sec pr hour T
-hr = 60*60
-
-# sec pr pixel t / p
-spp = max(T[3:])
-
-# pixels in an hour In an hour T / (t / p) = T * (p / t) = T / t * p
-print(hr / spp)
-
-# n * n
-print(np.sqrt(hr / spp))
-
-#%%
 print("Beginning inversion!")
 """
 Solve seabed inversely
 """
-correction = 1.#0.5*10**4
-best_c, best_model, best_idx, i = inversion.Solve(dv=1., dthermo=1., alpha_seabed=correction*4*10**6, alpha_thermo=correction*10**4, max_iter=50, min_iter=0, thermocline_iter=60, plot_optimization=True, only_optimize_thermocline=True)
+best_c, best_model, best_idx, i = inversion.Solve(variation_seabed=1, variation_thermocline=1, alpha_seabed=.03, alpha_thermo=0.05, seabed_iter=50, thermocline_iter=30, transition_iter=15, min_iter=3, plot_optimization=True, only_optimize_thermocline=False)
 
 cp_3 = log.checkpoint()
 print("Ending inversion!")
 
+
 #%%
-#plt.close('all')
+#inversions_sorted = [inversion_history_list[i] for i in np.argsort(cs)[:10]]
+#cs_sorted = [cs_list[i] for i in np.argsort(cs)[:10]]
+#
+#fig, (ax0, ax1) = plt.subplots(1, 2)
+#for i, (inversion_i, cs_i) in enumerate(zip(inversions_sorted, cs_sorted)):
+#    ax0.plot(cs_i, '.')
+#    plt.pause(0.5)
 
-data = np.array(inversion.data)
+#%%
 
-a = data[:, 1]
-da = data[:, 0]
-#da = a[1:] - a[:-1]; a = a[1:]
-w = data[:, 3]
-dw = data[:, 2]
-#dw = w[1:] - w[:-1]; w = w[1:]
-t = data[:, 5]
-dt = data[:, 4]
-dt = dt[t!=0.]
-t = t[t!=0.]
-#dt = t[1:] - t[:-1]; t = t[1:]
-
-
-def plot_thermo_hist(a, da, w, dw,  t, dt):
-    plt.figure()
-    plt.subplot(3, 1, 1)
-    plt.hist(da / a, bins=30)
-    plt.ylabel("Amplitude")
-    plt.subplot(3, 1, 2)
-    plt.hist(dw / w, bins=30)
-    plt.ylabel("Wave length")
-    plt.subplot(3, 1, 3)
-    plt.hist(dt / t, bins=30)
-    plt.ylabel("Time")
-
-def plot_thermo_vs_iteration(a, da, w, dw,  t, dt):
-    plt.figure()
-    plt.subplot(3, 3, 1)
-    plt.plot(a, '.')
-    plt.ylabel("Amplitude")
-    plt.subplot(3, 3, 2)
-    plt.plot(da, '.')
-    plt.subplot(3, 3, 3)
-    plt.plot(da / a, '.')
-    
-    plt.subplot(3, 3, 4)
-    plt.plot(w, '.')
-    plt.ylabel("Wave length")
-    plt.subplot(3, 3, 5)
-    plt.plot(dw, '.')
-    plt.subplot(3, 3, 6)
-    plt.plot(dw / w, '.')
-    
-    plt.subplot(3, 3, 7)
-    plt.plot(t, '.')
-    plt.ylabel("Time")
-    plt.subplot(3, 3, 8)
-    plt.plot(dt, '.')
-    plt.subplot(3, 3, 9)
-    plt.plot(dt / t, '.')
-
-plot_thermo_hist(a, da, w, dw,  t, dt)
-plot_thermo_vs_iteration(a, da, w, dw,  t, dt)
 
 
 #%%
-#def cleanup_ratios(ratios, fill_val=None):
-#    ratios = np.array(ratios)
-#    _fill_val = ratios.max() if fill_val is None else fill_val
-#    nan = np.isnan(ratios)
-#    return 
 
-ratios = np.array(inversion.ratio)
-idx = np.isinf(ratios)
-idx_not = ~idx
-ratios[idx] = ratios[idx_not].max()
-ratios[idx] = 0#ratios[idx_not].max()
-        
-for i in range(ratios.shape[1]):
-    plt.subplot(2, 3, i+1)
-    plt.hist(ratios[:, i], bins=20)
 
-for i in range(ratios.shape[1]):
-    plt.subplot(2, 3, i+1+ratios.shape[1])
-    plt.plot(ratios[:, i], '.')
-
-#%%
-a = np.array(inversion.a_list)
-w = np.array(inversion.w_list)
-t = np.array(inversion.t_list)
-
-plt.ylabel("a")
-plt.subplot(3, 3, 1)
-plt.plot(a[:, 0], '.')
-plt.subplot(3, 3, 2)
-plt.plot(a[:, 1], '.')
-plt.subplot(3, 3, 3)
-plt.plot(a[:, 2], '.')
-plt.ylabel("w")
-plt.subplot(3, 3, 4)
-plt.plot(w[:, 0], '.')
-plt.subplot(3, 3, 5)
-plt.plot(w[:, 1], '.')
-plt.subplot(3, 3, 6)
-plt.plot(w[:, 2], '.')
-plt.ylabel("t")
-plt.subplot(3, 3, 7)
-plt.plot(t[:, 0], '.')
-plt.subplot(3, 3, 8)
-plt.plot(t[:, 1], '.')
-plt.subplot(3, 3, 9)
-plt.plot(t[:, 2], '.')
 
 #%%
 """
@@ -364,136 +549,8 @@ Save oceanmodel figures
 """
 save_inversion_figures(inversion)
 
-#%%
-"""
-Plot iteration history of each seabed point
-"""
-import matplotlib.gridspec as gridspec
-plt.close('all')
-linewidth = 5
-label_fontsize = 15
-title_fontsize = 20
-colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
 
-gs = gridspec.GridSpec(nrows=3, ncols=1)
-fig = plt.figure()
-ax0 = fig.add_subplot(gs[0:2, 0])
-ax1 = fig.add_subplot(gs[2, 0], sharex=ax0)
-fig.tight_layout()
-fig.subplots_adjust(hspace=0)   
 
-seabeds = np.array(inversion.inversion_history)[:, :10]
-iter_ax = np.arange(seabeds.shape[0])
-
-for seabed, color in zip(seabeds.T, colors):
-    ax0.plot(iter_ax, seabed, ':', color=color, linewidth=linewidth)    
-for test, true, color in zip(seabeds[-1, :], inversion.true_seabed, colors):
-    ax0.plot([iter_ax[-1], iter_ax[-1]+1], [test, true], '-', color=color, linewidth=linewidth)
-ax0.set_ylabel("Depth of seabed  point", fontsize=label_fontsize)
-
-ax1.plot(iter_ax, inversion.cs, ':k', color='black', linewidth=linewidth)
-ax1.set_xlabel("Iteration", fontsize=label_fontsize)
-ax1.set_ylabel("Cost", fontsize=label_fontsize)
-
-ax0.set_title("Iteration history of seabed points", fontsize=title_fontsize)
-
-#%%
-"""
-Plotting inversion history
-"""
-#label_fontsize = 15
-#title_fontsize = 20
-#markersize = 15
-#linewidth = 5
-#
-#
-#if len(inversion.cs) == 0:
-#    raise Exception("No inversion history found!")
-#    
-#fig, (ax0, ax1) = plt.subplots(1, 2)
-#fig.tight_layout()
-#
-#h_ax = inversion.s_horizontal
-#best_idx = np.argmin(inversion.cs)
-#for i, seabed_spline in enumerate(inversion.inversion_history[:inversion.switch_idx]):
-#    alpha = 0.5 * i / len(inversion.inversion_history)
-#    ax0.plot(h_ax, seabed_spline[:len(h_ax)], '-k', alpha=alpha, linewidth=linewidth)
-#    plt.pause(0.1)
-#    
-#if inversion.true_seabed is not None:
-#    ax0.plot(h_ax, inversion.true_seabed, '-r', linewidth=linewidth, label="True model")
-#ax0.plot(h_ax, inversion.inversion_history[0][:len(h_ax)], '-k', linewidth=linewidth, label="Initial model")
-#ax0.plot(h_ax, inversion.inversion_history[best_idx][:len(h_ax)], '-b', linewidth=linewidth, label="Recovered model")
-#
-#ax0.set_xlabel("Horizontal distance", fontsize=label_fontsize)
-#ax0.set_ylabel("Depth", fontsize=label_fontsize)
-#ax1.plot(inversion.cs, '*:r', label="Cost", linewidth=linewidth)
-#ax1.text(30, 4*10**-5, f"Smallest cost: \n{inversion.cs[best_idx]:.2}", fontsize=label_fontsize)
-#ax0.legend(fontsize=label_fontsize)
-#ax1.set_xlabel("Iterations", fontsize=label_fontsize)
-#ax1.set_ylabel("Cost", fontsize=label_fontsize)
-#ax1.legend(fontsize=label_fontsize)
-#fig.suptitle("Plot of inversion method", fontsize=title_fontsize)
-
-#%%
-"""
-Plot how switching criteria works
-"""
-#def diff1d(s):
-#    ds = np.roll(s, -1) - s
-#    ds[-1] = ds[-2]
-#    return ds
-#
-#def plot_switching_criteria():
-#    
-#    def get_S(cs):
-#        return np.array([np.std(cs[:i+1]) for i in range(len(cs))])
-#    
-#    def get_dS(cs):
-#        S = get_S(cs)
-#        return diff1d(S)
-#    
-#    linewidth = 5
-#    label_fontsize = 15
-#    title_fontsize = 20
-#    
-#    fig, (ax0, ax1, ax2) = plt.subplots(3, 1)
-#    fig.tight_layout()
-#    fig.subplots_adjust(hspace=0)   
-#    
-#    cs = np.array(inversion.cs)
-#    S = get_S(cs)
-#    dS = get_dS(cs)
-#    iter_ax = np.arange(len(cs))
-#    ok = dS > 0
-#    switch = np.argmin(ok[5:]) + 4
-#    
-#    ax0.plot(iter_ax, cs, '-r', linewidth=linewidth)
-#    ax0.plot(iter_ax[ok], cs[ok], '-g', linewidth=linewidth)
-#    ax0.set_ylabel("Cost: c(i)",  fontsize=label_fontsize)
-#    ax0.axvline(2, linewidth=linewidth/2, color='black', ls=':', label='Initial skipped steps')
-#    ax0.axvline(switch, linewidth=linewidth/2, color='black', label='Point of switch')
-#    ax0.set_xlim([0, iter_ax.max()])
-#    ax1.plot(iter_ax, S, '-r', linewidth=linewidth)
-#    ax1.plot(iter_ax[ok], S[ok], '-g', linewidth=linewidth)
-#    ax1.set_ylabel("S = std(c(:i))",  fontsize=label_fontsize)
-#    ax1.axvline(2, linewidth=linewidth/2, color='black', ls=':')
-#    ax1.axvline(switch, linewidth=linewidth/2, color='black')
-#    ax1.set_xlim([0, iter_ax.max()])
-#    ax2.plot(iter_ax, dS, '-r', linewidth=linewidth)
-#    ax2.plot(iter_ax[ok], dS[ok], '-g', linewidth=linewidth)
-#    ax2.set_ylabel(r"$\frac{dS}{di}$",  fontsize=title_fontsize)
-#    ax2.set_xlabel("Iterations (i)", fontsize=label_fontsize)
-#    ax2.axvline(2, linewidth=linewidth/2, color='black', ls=':')
-#    ax2.axvline(switch, linewidth=linewidth/2, color='black')
-#    ax2.axhline(0, linewidth=linewidth/2, color='black', ls='--')
-#    ax2.set_xlim([0, iter_ax.max()])
-#    ax0.set_title("Determining switching criteria during optimization", fontsize=title_fontsize)
-#    fig.legend(fontsize=label_fontsize)
-#    
-#    return fig
-#
-#plot_switching_criteria()
 #%%
 """
 Print names of unised functions

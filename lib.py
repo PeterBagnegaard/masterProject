@@ -2,7 +2,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.interpolate import PchipInterpolator
 from matplotlib.cm import ScalarMappable
 import matplotlib.gridspec as gridspec
-from scipy.optimize import minimize
+#from scipy.optimize import minimize
 from scipy.signal import convolve
 import matplotlib.pyplot as plt
 from time import perf_counter
@@ -400,30 +400,7 @@ def plot_List(oceanModel):
     if len(oceanModel.List) == 0:
         raise Exception("List is empty")
     
-    fig, (ax, ax_hist, ax_diffs) = plt.subplots(1, 3)
     
-    diffs = [_list[1][-1] - _list[1][0] for _list in oceanModel.List]
-    ax_diffs.hist(diffs)
-    ax_diffs.set_xlabel("improvement from initial value", fontsize=label_fontsize)
-    ax_diffs.set_ylabel("wave_length", fontsize=label_fontsize)
-
-    ax_hist.hist([len(l[0]) for l in oceanModel.List])
-    ax_hist.set_xlabel("# Iteration steps", fontsize=label_fontsize)
-    ax_hist.set_ylabel("wave_length", fontsize=label_fontsize)
-
-    ax.set_yscale('log')
-    ax.set_xlim([0, oceanModel.h_span()])
-    for _list in oceanModel.List:
-        h, v = _list
-        ax.plot(h, v, ':', color='gray', markersize=markersize, linewidth=linewidth)
-        ax.plot(h[0], v[0], '*r', markersize=markersize, linewidth=linewidth)
-        ax.plot(h[-1], v[-1], '*b', markersize=markersize, linewidth=linewidth)
-    n_s = len(oceanModel.sources)
-    n_r = len(oceanModel.receivers)
-    for i in range(n_s):
-        _List = oceanModel.List[(i*n_s) : (i*n_s + n_r)]
-        _list = np.array([[l_h[-1], l_v[-1]] for l_h, l_v in _List])
-        ax.plot(_list[:, 0], _list[:, 1], '-k', markersize=markersize, linewidth=linewidth_thin)
 
 @log
 #def get_thermocline_point(oceanModel, eikonal):
@@ -453,14 +430,15 @@ def plot_travel_routes(oceanModel, source_ids, receiver_ids, title=None):
             
             source = oceanModel.source_eikonal(i)
             receiver = oceanModel.receiver_eikonal(i, j)
-            midpoint = (source_point + receiver_point) * 0.5
+#            midpoint = (source_point + receiver_point) * 0.5
             oceanModel.set_T(source, receiver)
-            res = oceanModel.minimize(midpoint[0])
-            h_point = res['x']
+            _, h_point = oceanModel.minimize(False)
+#            res = oceanModel.minimize(midpoint[0])
+#            h_point = res['x']
             v_point = oceanModel.seabed_spline(h_point)
             
-            horizontal = [float(source_point[0]), h_point[0], float(receiver_point[0])]
-            vertical   = [float(source_point[1]), v_point[0], float(receiver_point[1])]
+            horizontal = [float(source_point[0]), h_point, float(receiver_point[0])]
+            vertical   = [float(source_point[1]), v_point, float(receiver_point[1])]
             ax.plot(horizontal, vertical, '-', markersize=markersize, linewidth=linewidth_thin, color='gray')
 
     fig.tight_layout()
@@ -828,30 +806,46 @@ Inversion
 class Inversion:
     
     @log
-    def __init__(self, oceanModel, sigmas=None, verbose=True):#, verbose_plot_progress=True):
+    def __init__(self, oceanModel, true_oceanModel, sigmas=None, verbose=True):#, verbose_plot_progress=True):
         # Settable variables
         self.oceanModel = oceanModel
-        self.seabed_horizontal = oceanModel.seabed_spline.coordinates()[0]
+        self.seabed_horizontal, self.m_priori = oceanModel.seabed_spline.coordinates()
         self.thermocline_horizontal = oceanModel.thermocline_spline.coordinates()[0]
-        self.cs = []
-        self.inversion_history = []
-        self.covariance_inv = self.get_covariance_inv(sigmas)
+#        self.cs = []
+#        self.inversion_history = []
+        self.get_covariance_inv(sigmas)
         # Internal variables
-        self.true_toa = None
+#        self.true_toa = None
         
         self.true_seabed = None # This is cheating!
         self.true_thermocline = None # This is also cheating!
         self.verbose = verbose
+        self.set_true_data(true_oceanModel)
 #        self.ratio = []
-        self.cs = []
-        self.inversion_history = []
+#        self.cs = []
+#        self.inversion_history = []
+        self.cs = [self.Cost()]
+        self.inversion_history = [np.concatenate((oceanModel.seabed_spline.coordinates()[1], oceanModel.thermocline_spline.coordinates()[1]))]
         self.data = []
         
     @log
     def get_covariance_inv(self, sigmas):
-        variance = np.diag(sigmas ** 2)
-        return np.linalg.inv(variance)
+        self.C_D = np.diag(sigmas ** 2)
+        self.C_D_inv = np.linalg.inv(self.C_D)
         
+    @log
+    def get_G(self, m_i, dv, target='seabed'):
+        dv_ax = np.zeros_like(m_i)
+        G = np.zeros([len(self.true_toa), len(m_i)])
+        for i in range(len(m_i)):
+            dv_ax[i-1] = 0.
+            dv_ax[i] = dv
+            m_new = m_i + dv_ax
+            self.set_spline(m_new, target=target)
+            G[:, i] = self.get_TOA() - self.true_toa
+            print(i)
+        return G
+    
     @log
     def derivative(self, x, dv, cost0, target='seabed'):
         # Method
@@ -911,7 +905,9 @@ class Inversion:
 
         # Lists for storing optimization history
         # Remember initial conditions
-        seabed_i = np.copy(self.oceanModel.seabed_spline.coordinates())[1]
+#        seabed_i = np.copy(self.oceanModel.seabed_spline.coordinates())[1]
+        seabed_i = self.
+        
         new_seabed = np.copy(seabed_i)
         thermo_i = self.oceanModel.thermocline_spline.coordinates()[1]
         new_thermo = np.copy(thermo_i)
@@ -926,6 +922,9 @@ class Inversion:
         max_iter = seabed_iter
         while i <= max_iter:
             cost = self.Cost()
+            
+            if cost > 5*10**4:
+                break
 
             # Check if optimization should switch to Transition phase
             if optimize_seabed:
@@ -958,7 +957,7 @@ class Inversion:
 
             # Seabed optimization
             if optimize_seabed or transition_phase:
-                self.print_message(f"Optimizing seabed at idx {i} of {max_iter}")
+                self.print_message(f"{i} | Optimizing seabed at idx {i} of {max_iter} | Cost={cost:.5}")
                 der_seabed = self.derivative(seabed_i, variation_seabed, cost, target='seabed')
                 new_seabed = seabed_i - der_seabed * alpha_seabed
                 self.set_spline(new_seabed, 'seabed')
@@ -983,7 +982,6 @@ class Inversion:
             # Save and plot step
             self.cs.append(cost)
             self.inversion_history.append(np.concatenate((seabed_i, thermo_i)))
-            self.print_message(f"{i}: Cost={cost}")
 
             i += 1
 #                    break
@@ -1043,7 +1041,7 @@ class Inversion:
     def Cost(self):
         test_data = self.get_TOA()
         diff = (test_data - self.true_toa).reshape([1, -1])
-        return (diff @ self.covariance_inv @ diff.T)[0, 0]
+        return (diff @ self.C_D_inv @ diff.T)[0, 0]
 #        cost = np.sum(diff ** 2)
 #        sqrt_cost = np.sqrt(cost)
 #        return sqrt_cost
@@ -1058,6 +1056,10 @@ class Inversion:
             self.oceanModel.initialize()
             
         return self.oceanModel.TOA()
+    
+    @log
+    def m_i(self):
+        return self.oceanModel.m_i
             
     @log
     def check_points(self, points):
@@ -1118,6 +1120,50 @@ class Inversion:
         self.true_seabed = true_oceanModel.seabed_spline.coordinates()[1]
         self.true_thermocline = true_oceanModel.thermocline_spline.coordinates()[1]
 
+    def plot_reflection_points(self):
+        y, x = np.histogram(self.oceanModel.List, bins=50)
+        h_ax = self.oceanModel.dense_horizontal_ax
+        v_ax_test = self.oceanModel.seabed_spline(h_ax, True)
+        self.set_spline(self.true_seabed)
+        v_ax_true = self.oceanModel.seabed_spline(h_ax, True)
+        self.set_spline(self.inversion_history[0][:10])
+        v_ax_initial = self.oceanModel.seabed_spline(h_ax, True)
+        self.set_spline(self.inversion_history[-1][:10])
+        
+        fig = plt.figure()
+        fig.subplots_adjust(hspace=0)
+        gs = gridspec.GridSpec(4, 1)
+        
+        ax0 = fig.add_subplot(gs[0:2, 0])
+        ax0.bar((x[1:] + x[:-1])/2, y, width = (x[1]-x[0])*0.9, color='black')
+        ax0.xaxis.set_visible(False)
+        ax0.set_ylabel("Count", fontsize=label_fontsize)
+        ax0.set_title("Points of reflection on seabed", fontsize=title_fontsize)
+        set_tick_fontsize(ax0)
+        ax0.set_xlim([h_ax[0], h_ax[-1]])
+        
+        ax1 = fig.add_subplot(gs[2, 0])
+        ax1.plot(h_ax, v_ax_initial, '-k', linewidth=linewidth, label="Initial seabed")
+        ax1.plot(h_ax, v_ax_true, '-b', linewidth=linewidth, label="True seabed")
+        ax1.plot(h_ax, v_ax_test, '-r', linewidth=linewidth, label="Recovered seabed")
+        ax1.invert_yaxis()
+        ax1.xaxis.set_visible(False)
+        ax1.set_ylabel("Depth", fontsize=label_fontsize)
+        ax1.legend(fontsize=label_fontsize)
+        set_tick_fontsize(ax1)
+        ax1.set_xlim([h_ax[0], h_ax[-1]])
+        
+        ax2 = fig.add_subplot(gs[3, 0])
+        ax2.plot(h_ax, v_ax_true - v_ax_test, '-k', linewidth=linewidth, label="Error")
+        ax2.plot(h_ax, np.zeros_like(h_ax), ':k', linewidth=linewidth)
+        ax2.invert_yaxis()
+        ax2.set_xlabel("Horizontal distance", fontsize=label_fontsize)
+        ax2.set_ylabel("Depth", fontsize=label_fontsize)
+        ax2.legend(fontsize=label_fontsize)
+        set_tick_fontsize(ax2)
+        ax2.set_xlim([h_ax[0], h_ax[-1]])
+        
+
     def plot_during_inversion(self, seabed_i, new_seabed, thermo_i, new_thermo, i, axis):
         if len(self.cs) == 0:
             return
@@ -1129,7 +1175,7 @@ class Inversion:
         ax_cost.semilogy(self.cs, '*:r')
         ax_cost.set_xlabel("Iteration step")
         ax_cost.set_ylabel(r"$Cost \rightarrow \Sigma_i (|residual_i|)$")
-        ax_cost.set_ylim([0, max(self.cs)*1.01])
+#        ax_cost.set_ylim([0, max(self.cs)*1.01])
         
         # seabed with initial value
         ax_seabed.clear() 
@@ -1448,8 +1494,8 @@ class OceanModel:
         # Internal variables        
         self.T = None
         self.order = 2
-        self.h_list = []
-        self.t_list = []
+#        self.h_list = []
+#        self.t_list = []
         self.List = []
         self.is_initialized = False
         self.options = {'disp': self.verbose, 'xatol' : 0.1, 'fatol' : 10**-7}#, 'eps':.5}
@@ -1487,47 +1533,7 @@ class OceanModel:
             self.oceanmodel[v_i:, h_i] = self.speed_below
         self.is_initialized = False
 
-#    def TOA(self):
-#        """
-#        <--len(receivers)-->
-#        
-#        | ...receiver 1... |      ^
-#        | ...receiver 2... |      |
-#        | ...receiver 3... | len(sources)
-#        | ...receiver 4... |      |
-#        |       ...        |      v
-#        
-#        returns:
-#        [T(s1, r1), T(s1, r2), ..., T(s2, r1), T(s2, r2), ..., T(sn, rm)]
-#        """
-#        results = []
-#                
-#        for i, source_point in enumerate(self.coordinates2index(self.sources)):
-#            for j, receiver_point in enumerate(self.coordinates2index(self.receivers)):
-#                
-#                self.set_T(self.source_eikonal(i), self.receiver_eikonal(i, j))
-#                
-#                v_poss = (source_point[0], receiver_point[0])
-#                start = min(v_poss) 
-#                end = max(v_poss)
-#                midpoint = np.round((end + start) * 0.5).astype(float)
-#                
-#                h_ax = np.arange(start, end, dtype=int)
-#                v_ax = self.seabed_spline(h_ax)
-#                
-#                t_ax = [self.T[v_i, h_i] for h_i, v_i in zip(h_ax, v_ax)]
-#                
-#                s = PchipInterpolator(h_ax, t_ax)
-#                
-#                res = minimize(s, midpoint, method=self.method, bounds=[(start, end)], options=self.options)
-#        
-##                results.append(res['x'])
-#                results.append(res['fun'])
-#
-#        self.reset_T()
-#        
-#        return np.array(results)
-
+    @log
     def TOA(self):
         """
         <--len(receivers)-->
@@ -1544,49 +1550,54 @@ class OceanModel:
         source_ax = self.coordinates2index(self.sources)
         receiver_ax = self.coordinates2index(self.receivers)
         n = len(source_ax)
-        h_ax = self.dense_horizontal_ax
+#        h_ax = self.dense_horizontal_ax
         
         results = np.zeros(n * len(receiver_ax))
         
                 
-        for i, source_point in enumerate(source_ax):
+        for i, source_poifnt in enumerate(source_ax):
             for j, receiver_point in enumerate(receiver_ax):
                 
                 self.set_T(self.source_eikonal(i), self.receiver_eikonal(i, j))
                 
-#                v_poss = (source_point[0], receiver_point[0])
-#                start = min(v_poss) 
-#                end = max(v_poss)
-#                midpoint = np.round((end + start) * 0.5).astype(float)
-                
-                v_ax = self.seabed_spline(h_ax)
-                t_ax = [self.T[v_i, h_i] for h_i, v_i in zip(h_ax, v_ax)]
-                results[i*n + j] = min(t_ax)
-                
-#                s = PchipInterpolator(h_ax, t_ax)
-#                
-#                res = minimize(s, midpoint, method=self.method, bounds=[(start, end)], options=self.options)
-        
-#                results.append(res['x'])
-#                results.append(res['fun'])
+#                v_ax = self.seabed_spline(h_ax)
+#                t_ax = [self.T[v_i, h_i] for h_i, v_i in zip(h_ax, v_ax)]
+#                results[i*n + j] = min(t_ax)
+                results[i*n + j] = self.minimize()
 
         self.reset_T()
         
-        return np.array(results)
+        return results
     
+    def minimize(self, only_time=True):
+        v_ax = self.seabed_spline(self.dense_horizontal_ax)
+        t_ax = [self.T[v_i, h_i] for h_i, v_i in zip(self.dense_horizontal_ax, v_ax)]
+
+        if self.save_optimization:        
+            idx = np.argmin(t_ax)
+            self.List.append(self.dense_horizontal_ax[idx])
+        
+        if only_time:
+            return min(t_ax)
+        
+        idx = np.argmin(t_ax)
+        return min(t_ax), self.dense_horizontal_ax[idx]
+
+    def m_i(self):
+        return self.seabed_spline.coordinates()[1]
     
-    @log
-    def minimize(self, x0):
-        if self.save_optimization:
-            self.h_list = []
-            self.t_list = []
-            res = minimize(self.time_at_horizontal_idx, x0, method=self.method, bounds=self.bounds, options=self.options)
-            self.List.append([self.h_list, self.t_list])
-            self.h_list = []
-            self.t_list = []
-        else:
-            res = minimize(self.time_at_horizontal_idx, x0, method=self.method, bounds=self.bounds, options=self.options)
-        return res
+#    @log
+#    def minimize2(self, x0):
+#        if self.save_optimization:
+#            self.h_list = []
+#            self.t_list = []
+#            res = minimize(self.time_at_horizontal_idx, x0, method=self.method, bounds=self.bounds, options=self.options)
+#            self.List.append([self.h_list, self.t_list])
+#            self.h_list = []
+#            self.t_list = []
+#        else:
+#            res = minimize(self.time_at_horizontal_idx, x0, method=self.method, bounds=self.bounds, options=self.options)
+#        return res
 
     @log
     def write_OceanModelRSF(self):
@@ -1679,40 +1690,40 @@ class OceanModel:
         if (self.T is None):
             raise Exception('T is not set!')
         
-    @log
-    def time_at_horizontal_idx(self, h):
-        self.check_T()
-
-        if type(h) == np.ndarray:
-            h = h[0]
-        
-        # edge conditions 
-        h_idx = np.round(h).astype(int)
-        h_idx = max(h_idx, 1)
-        h_idx = min(h_idx, self.h_span() - 1)
-        
-        # vertical position
-        v = self.seabed_spline(h_idx, get_float=True)
-        v_idx = self.seabed_spline(h_idx, get_float=False)
-       
-        # Get subset and mask
-        T = self.T[v_idx-1:v_idx+2, h_idx-1:h_idx+2]
-        
-        mask = (np.array([[-1, -2, -1],[0, 0, 0],[1, 2, 1]]) * 0.0625).astype(float)
-
-        # Get dh and dv
-        dt_dv = (mask * T).sum()
-        dt_dh = (mask * T.T).sum()
-        
-        dh = h - h_idx
-        dv = v - v_idx
-        
-        dt = dh * dt_dh + dv * dt_dv
-        
-        self.h_list.append(h)
-        self.t_list.append(T[1, 1] + dt)
-                                
-        return T[1, 1] + dt
+#    @log
+#    def time_at_horizontal_idx(self, h):
+#        self.check_T()
+#
+#        if type(h) == np.ndarray:
+#            h = h[0]
+#        
+#        # edge conditions 
+#        h_idx = np.round(h).astype(int)
+#        h_idx = max(h_idx, 1)
+#        h_idx = min(h_idx, self.h_span() - 1)
+#        
+#        # vertical position
+#        v = self.seabed_spline(h_idx, get_float=True)
+#        v_idx = self.seabed_spline(h_idx, get_float=False)
+#       
+#        # Get subset and mask
+#        T = self.T[v_idx-1:v_idx+2, h_idx-1:h_idx+2]
+#        
+#        mask = (np.array([[-1, -2, -1],[0, 0, 0],[1, 2, 1]]) * 0.0625).astype(float)
+#
+#        # Get dh and dv
+#        dt_dv = (mask * T).sum()
+#        dt_dh = (mask * T.T).sum()
+#        
+#        dh = h - h_idx
+#        dv = v - v_idx
+#        
+#        dt = dh * dt_dh + dv * dt_dv
+#        
+#        self.h_list.append(h)
+#        self.t_list.append(T[1, 1] + dt)
+#                                
+#        return T[1, 1] + dt
 
     @log
     def oceanmodel_from_spline(self, water_speed, ground_speed):
