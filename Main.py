@@ -186,6 +186,9 @@ def get_true_seabed(noise=0.01):
     v_noise = np.random.randn(len(v)) * float(noise) * v.mean()
     return h, v, v + v_noise
 
+def get_model_error():
+    return 10**2 / np.array([305.95466769,  19.90975113,   9.61094035,   6.13700691, 5.57069161,   5.57069161,   6.13700691,   9.61094035, 19.90975113, 305.95466769])
+
 plt.close('all')
 os.chdir('/home/peter/Desktop/master_project/Madagascar/MadClass')
 
@@ -204,13 +207,13 @@ sources   = [[i, 0.1] for i in np.linspace(0.1, 1.3, num=10)]
 receivers = [[i, 0.1] for i in np.linspace(0.1, 1.3, num=10)+0.05]
 times = np.linspace(0, 20, num=len(sources))
 
-seabed_true = flat_noisy_coordinates(10, _oceanmodel.shape[1], 400, noise_fraction=0.1 )
+seabed_true = flat_noisy_coordinates(10, _oceanmodel.shape[1], 400, noise_fraction=0.01 )
 seabed_test = flat_noisy_coordinates(10, _oceanmodel.shape[1], 400, noise_fraction=0)
 #h, v, v_n = get_true_seabed(noise=0.1)
 
 thermocline_true = flat_noisy_coordinates(10, _oceanmodel.shape[1], 200, noise_fraction=0)
 thermocline_test = flat_noisy_coordinates(10, _oceanmodel.shape[1], 200, noise_fraction=0)
-
+thermocline_test[1][5] = 215 #!!!
 print("Creating ocean models")
 
 #true_oceanModel = OceanModel(_oceanmodel, sources, receivers, times, os.getcwd(), hv_seabed_points=(h, v  ), hv_thermocline_points=thermocline_true, step_sizes=[0.0007, 0.0007, 0.0005], verbose=False)
@@ -225,60 +228,306 @@ print("Ocean models created")
 
 
 
-#%%
 """
 Initialize Inversion class
 """
-inversion = Inversion(test_oceanModel, true_oceanModel, sigmas=get_sigma_matrix(true_oceanModel), verbose=True)
+inversion = Inversion(test_oceanModel, true_oceanModel, sigmas=get_sigma_matrix(true_oceanModel), C_M=get_model_error(), verbose=True)
 
 inversion.know_the_real_answer(true_oceanModel)
 
-
 #%%
-m_i = inversion.oceanModel.seabed_spline.coordinates()[1]
+j = inversion.derivative(inversion.state("thermocline"), 4, 0, target='thermocline')
 
-G = inversion.get_G(m_i, 3.)
-
-C_M = np.diag(np.ones_like(m_i))
-C_D = inversion.C_D
-C_D_inv = inversion.C_D_inv
-
-d_d = inversion.get_TOA() - inversion.true_toa
-d_m = inversion.m_i() - inversion.m_priori
-#%%
-T = G.T @ C_D_inv
-T_0 = T @ G
-T_1 = T @ d_d
-T_2 = np.linalg.inv(C_M) @ d_m
-T_3 = np.linalg.inv(T_0 + C_M)
-T_4 = T_1 + T_2
-res = T_3 @ T_4
-
-
-#%%
-"""
-Find G
-"""
-#def get_G():
-def get_G(self, m_i, dv, cost0, target='seabed'):
-    dv_ax = np.zeros_like(m_i)
-    G = np.zeros([len(self.true_toa.copy()), len(m_i)])
-    for i in range(len(m_i)):
-        dv_ax[i-1] = 0.
-        dv_ax[i] = dv
-        m_new = m_i + dv_ax
-        self.set_spline(m_new, target=target)
-        d_i = self.oceanModel.TOA()
-        G[:, i] = d_i - self.true_toa.copy()
-    
-
-
+_, ax = plt.subplots(2, 1)
+ax[0].plot(j , '.')
+ax[1].plot(inversion.state("thermocline") , '.')
 
 #%%
 """
 Solve inversion problem
 """
-best_c, best_model, best_idx, i = inversion.Solve(variation_seabed=1, variation_thermocline=1, alpha_seabed=.03, alpha_thermo=0.05, seabed_iter=50, thermocline_iter=30, transition_iter=15, min_iter=3, plot_optimization=True, only_optimize_thermocline=False)
+#a=4.117647058823529
+#v=-3.8235294117647056
+#a= 0.5
+#v = 3.
+
+#inversion.a = a
+#inversion.v = v
+best_c, best_model, best_idx, i = inversion.Solve(variation_seabed=4, 
+                                                  variation_thermocline=1, 
+                                                  alpha_seabed=1., 
+                                                  alpha_thermo=0.05, 
+                                                  seabed_iter=50, 
+                                                  thermocline_iter=30, 
+                                                  transition_iter=15, 
+                                                  min_iter=3, 
+                                                  plot_optimization=True, 
+                                                  only_optimize_thermocline=False)
+
+#cov = inversion.posteriori_covariance(v)
+
+#%%
+
+
+
+#%%
+
+fig, ax = plt.subplots(1, 1)
+for covariance, t_data, t_model in inversion.data:
+    ax.clear()
+    
+    err = covariance.diagonal()
+    ax.errorbar(inversion.seabed_horizontal-10, covariance @ t_data , yerr=err, label="data", color='red')
+    ax.errorbar(inversion.seabed_horizontal+10, covariance @ t_model, yerr=err, label="model", color='blue')
+    ax.legend()
+    
+    plt.pause(0.4)
+    #%%
+
+fig, ax = plt.subplots(1, 1)
+n = len(inversion.data)
+dh = inversion.seabed_horizontal[1] - inversion.seabed_horizontal[0]
+for i, (covariance, t_data, t_model) in enumerate(inversion.data):   
+    err = covariance.diagonal()
+    ax.errorbar(inversion.seabed_horizontal + i*dh/n, covariance @ t_data , yerr=err, label="data" , color='red' , alpha=i/n)
+#    ax.errorbar(inversion.seabed_horizontal + i*dh/n, covariance @ t_model, yerr=err, label="model", color='blue', alpha=i/n)
+ax.legend()
+    
+
+#%%
+a=4.117647058823529
+v=-3.8235294117647056
+
+inversion.set_spline(seabed_test[1])
+m_i = inversion.m_i()
+
+grad_old = inversion.derivative(m_i, v, inversion.Cost()) * 0.03
+inversion.set_spline(seabed_test[1])
+grad_new = inversion.quasi_Newton(v) * a
+#%%
+plt.figure()
+plt.subplot(2, 1, 1)
+plt.plot(true_oceanModel.m_i(), ':r', label="True")
+plt.plot(inversion.oceanModel.m_i(), ':b', label="Test")
+plt.legend()
+plt.subplot(2, 1, 2)
+plt.plot(grad_old, ':r', label="old")
+plt.plot(-grad_new, ':b', label="new")
+plt.legend()
+#%%
+
+d_data = inversion.get_TOA() - true_oceanModel.TOA()
+d_model = inversion.m_i() - true_oceanModel.m_i()
+d_data = d_data.reshape([-1, 1])
+d_model = d_model.reshape([-1, 1])
+
+plt.subplot(2, 2, 1)
+plt.hist(d_data)
+plt.title("Delta data")
+plt.subplot(2, 2, 2)
+plt.hist(d_model)
+plt.title("Delta model")
+plt.subplot(2, 2, 3)
+plt.hist(inversion.C_D_inv.diagonal())
+plt.subplot(2, 2, 4)
+plt.hist(inversion.C_M_inv.diagonal())
+
+error_data = d_data.T @ inversion.C_D_inv @ d_data
+error_model = d_model.T @ inversion.C_M_inv @ d_model
+
+print(f"{error_data=}")
+print(f"{error_model=}")
+
+#%%
+def mean_std(v):
+    diff = true_oceanModel.m_i() - inversion.m_i()
+    grad = inversion.quasi_Newton(v)
+    mean = np.mean(grad[1:-1] / diff[1:-1])
+    std = np.std(grad[1:-1] / diff[1:-1])
+    
+    plt.clf()
+    plt.subplot(2, 1, 1)
+    plt.plot(diff, ':r', label="True")
+    plt.plot(grad, ':b', label="Gradient")
+    plt.legend()
+    plt.title(v)
+    plt.subplot(2, 1, 2)
+    plt.plot(grad / diff)
+    plt.axhline(mean, color='black')
+    plt.axhline(mean+std, color='gray')
+    plt.axhline(mean-std, color='gray')
+    return mean, std
+
+means = []
+stds = []
+v_ax = np.linspace(-4, 4, num=20)
+for v in v_ax:
+    print(v)
+    mean, std = mean_std(v)
+    means.append(mean)
+    stds.append(std)
+    plt.pause(0.01)
+    
+plt.figure()
+plt.errorbar(v_ax, means, yerr=stds)
+plt.axhline(0, color='black')
+plt.xlabel("Variation")
+plt.ylabel("gradient / true gradient")
+#%%
+"""
+Calculate step
+"""
+#v=1
+#
+#m_i = inversion.m_i()
+#
+#G = inversion.get_G(m_i, v)    # +- 10^-5
+#
+#C_M_inv = np.linalg.inv(np.diag(get_model_error()))
+#C_D_inv = inversion.C_D_inv
+#
+#d_d = inversion.get_TOA() - inversion.true_toa
+#d_m = inversion.m_i() - inversion.m_priori
+#
+#T = G.T @ C_D_inv                   # +- 10^7
+#T_0 = T @ G                         # +  7000
+#T_1 = T @ d_d                       # +  7000
+#T_2 = C_M_inv @ d_m                 #    0
+#T_3 = np.linalg.inv(T_0 + C_M_inv)  # +- 0.4
+#T_4 = T_1 + T_2                     # +  7000
+#res = T_3 @ T_4                     # +  0.5
+
+
+#%%
+
+plt.close('all')
+def get_a_cost(grad):
+    cost = []
+    ax0.plot(m_i, '-k')
+    ax0.plot(true_oceanModel.m_i(), '-r')
+    print(m_i)
+    for a in a_ax:
+        inversion.set_spline(m_i - a*grad)
+        cost.append(inversion.Cost() / cost0)
+        print(f"a = {a} | {cost[-1]}")
+        
+        ax1.clear()
+        ax0.plot(inversion.m_i(), ':k')
+        ax1.plot(a_ax[:len(cost)], cost)
+        plt.pause(0.01)
+    inversion.set_spline(m_i)
+    return cost
+
+
+a_ax = np.linspace(-10, 10, num=18)
+v_ax = np.linspace(-5, 5, num=18)
+A, V = np.meshgrid(a_ax, v_ax)
+J = np.zeros_like(A)
+costs = []
+cost_best = []
+
+inversion.set_spline(seabed_test[1])
+m_i = inversion.m_i().copy()
+cost0 = inversion.Cost()
+
+_, (ax0, ax1) = plt.subplots(1, 2)
+_, ax2 = plt.subplots(1, 1)
+for i, v in enumerate(v_ax):
+    ax0.clear()
+    ax1.clear()
+    print(f"======={v}=======")
+    grad = inversion.quasi_Newton(v)
+    cost = get_a_cost(grad)
+    costs.append(cost)
+    J[i, :] = np.array(cost)
+    ax2.clear()
+    ax2.contourf(A, V, J)
+    ax2.set_xlabel("a")
+    ax2.set_ylabel("v")
+    plt.pause(0.1)
+
+#%%
+_, ax3 = plt.subplots(1, 1)  
+JJ = J.copy()
+JJ[JJ > 1] = 1
+im = ax3.contourf(A, V, JJ)
+ax3.set_xlabel("a")
+ax3.set_ylabel("v")
+plt.colorbar(im)
+
+for _ in range(10):
+    i, j = np.unravel_index(JJ.argmin(), JJ.shape)
+    JJ[i, j] = 1.
+    plt.plot(a_ax[j], v_ax[i], '*')
+    plt.pause(0.5)
+    print(f"a={a_ax[j]} | v={v_ax[i]}")
+
+#%%
+import numpy as np
+
+def make_field(price, vertical_pixels=10):
+    y_axis = np.linspace(price.min(), price.max(), num=vertical_pixels)
+    data = np.zeros([vertical_pixels, len(price)])
+    for i, p in enumerate(price):
+        idx = np.argmin(abs(y_axis - p))
+        data[idx, i] = 1
+    return data
+
+#%%
+A, V = np.meshgrid(a_ax, v_ax)
+
+j = np.array(costs)/935.162520790935
+
+plt.close('all')
+plt.figure()
+plt.contourf(A, V, np.log10(j))
+#plt.contourf(A[:3, :], V[:3, :], np.log10(j[:3, :]))
+plt.colorbar()
+
+plt.figure()
+#for v_i, cost_v in zip(v_ax[:3], costs[:3]):
+plt.axvline(0, color='black')
+for v_i, cost_v in zip(v_ax, costs):
+    plt.semilogy(a_ax, np.array(cost_v)/935.162520790935, '.:', label=f"v={v_i}")
+    plt.title(v_i)
+    plt.xlabel("a")
+#    plt.pause(1.3)
+plt.legend()
+#%%
+
+
+
+#%%
+inversion.set_spline(seabed_test[1])
+
+cs = [inversion.Cost()] # 24360.913009563545
+history = [inversion.m_i()]
+colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+
+while True:
+    step = inversion.quasi_Newton(v=v, a=a)
+    print(abs(step).mean())
+    m_new = inversion.m_i() - step
+    inversion.set_spline(m_new)
+    cs.append(inversion.Cost())
+    history.append(inversion.m_i())
+
+    plt.clf()
+    plt.subplot(1, 2, 1)
+    plt.plot(cs, '.')
+    plt.subplot(1, 2, 2)
+    j = np.array(history)
+    for i, color in enumerate(colors):
+        plt.plot(j[:, i], ':', color=color, label=i)
+        plt.axhline(true_oceanModel.m_i()[i], color=color)
+    plt.legend()
+    plt.pause(0.01)
+
+#%%
+cost0 = inversion.Cost()
+derivative = inversion.derivative(m_i, 3, cost0)
+
+
 
 
 #%%

@@ -806,14 +806,16 @@ Inversion
 class Inversion:
     
     @log
-    def __init__(self, oceanModel, true_oceanModel, sigmas=None, verbose=True):#, verbose_plot_progress=True):
+    def __init__(self, oceanModel, true_oceanModel, sigmas=None, C_M=None, verbose=True):#, verbose_plot_progress=True):
         # Settable variables
         self.oceanModel = oceanModel
-        self.seabed_horizontal, self.m_priori = oceanModel.seabed_spline.coordinates()
-        self.thermocline_horizontal = oceanModel.thermocline_spline.coordinates()[0]
+        self.seabed_horizontal, self.state_seabed_priori = oceanModel.seabed_spline.coordinates()
+        self.thermocline_horizontal, self.state_thermo_priori = oceanModel.thermocline_spline.coordinates()
 #        self.cs = []
 #        self.inversion_history = []
         self.get_covariance_inv(sigmas)
+        self.C_M_inv = np.linalg.inv(np.diag(C_M))
+
         # Internal variables
 #        self.true_toa = None
         
@@ -830,39 +832,51 @@ class Inversion:
         
     @log
     def get_covariance_inv(self, sigmas):
-        self.C_D = np.diag(sigmas ** 2)
-        self.C_D_inv = np.linalg.inv(self.C_D)
-        
+        C_D = np.diag(sigmas ** 2)
+        self.C_D_inv = np.linalg.inv(C_D)
+
     @log
-    def get_G(self, m_i, dv, target='seabed'):
+    def quasi_Newton(self, dv=3., target='seabed'):
+        G = self.get_G(dv, target=target)    # +- 10^-5
+        
+        d_d = self.get_TOA() - self.true_toa
+        d_m = self.state(target) - self.state_priori(target)
+        
+        T = G.T @ self.C_D_inv
+        covariance = np.linalg.inv(T @ G + self.C_M_inv)
+        t_data = T @ d_d
+        t_model = self.C_M_inv @ d_m
+        self.data.append([covariance, t_data, t_model])
+        return  covariance @ (t_data + t_model)
+    
+    @log
+    def posteriori_covariance(self, dv=3, G=None, target='seabed'):
+        if G is None:
+            G = self.get_G(dv, target=target)    # +- 10^-5
+                
+        T = G.T @ self.C_D_inv                  
+        T_0 = T @ G                             
+        return np.linalg.inv(T_0 + self.C_M_inv) 
+    
+    @log
+    def get_G(self, dv, target='seabed'):
+        m_i = self.state(target)
         dv_ax = np.zeros_like(m_i)
         G = np.zeros([len(self.true_toa), len(m_i)])
         for i in range(len(m_i)):
             dv_ax[i-1] = 0.
             dv_ax[i] = dv
-            m_new = m_i + dv_ax
-            self.set_spline(m_new, target=target)
-            G[:, i] = self.get_TOA() - self.true_toa
-            print(i)
+            self.set_spline(m_i + dv_ax, target=target)
+            toa_plus = self.get_TOA()
+            self.set_spline(m_i - dv_ax, target=target)
+            toa_minus = self.get_TOA()
+            G[:, i] = (toa_plus - toa_minus) / dv
+        self.set_spline(m_i, target=target)
         return G
-    
+
     @log
     def derivative(self, x, dv, cost0, target='seabed'):
-        # Method
-        dv_ax = np.zeros_like(x)
-        
-        costi = np.zeros_like(x)
-        
-        for i in range(len(x)):
-            dv_ax[i-1] = 0.
-            dv_ax[i] = dv
-            v_new = x + dv_ax
-            self.set_spline(v_new, target=target)
-            costi[i] = self.Cost()
-        
-        jacobian = costi - cost0
-        
-        return jacobian
+        return self.quasi_Newton(dv, target=target) # !!!        
 
     @log 
     def Solve(self, variation_seabed=1., variation_thermocline=1., alpha_seabed=10**6., alpha_thermo=10**5., seabed_iter=50, min_iter=2, transition_iter=4, thermocline_iter=10, plot_optimization=True, only_optimize_thermocline=False):
@@ -906,7 +920,7 @@ class Inversion:
         # Lists for storing optimization history
         # Remember initial conditions
 #        seabed_i = np.copy(self.oceanModel.seabed_spline.coordinates())[1]
-        seabed_i = self.
+        seabed_i = self.state('seabed')
         
         new_seabed = np.copy(seabed_i)
         thermo_i = self.oceanModel.thermocline_spline.coordinates()[1]
@@ -960,8 +974,9 @@ class Inversion:
                 self.print_message(f"{i} | Optimizing seabed at idx {i} of {max_iter} | Cost={cost:.5}")
                 der_seabed = self.derivative(seabed_i, variation_seabed, cost, target='seabed')
                 new_seabed = seabed_i - der_seabed * alpha_seabed
+#                new_seabed = seabed_i - der_seabed * alpha_seabed # !!!
                 self.set_spline(new_seabed, 'seabed')
-                self.data.append([i, der_seabed])
+#                self.data.append([i, der_seabed])
 
             # Thermocline optimization
             if optimize_thermocline:
@@ -970,7 +985,7 @@ class Inversion:
                 der_thermo = self.derivative(thermo_i, variation_thermocline, cost, target='thermocline')
                 new_thermo = thermo_i - der_thermo * alpha_thermo
                 self.set_spline(new_thermo, 'thermocline')
-                self.data.append([i, der_thermo])
+#                self.data.append([i, der_thermo])
                     
             if plot_optimization:
                 self.plot_during_inversion(seabed_i, new_seabed, thermo_i, new_thermo, i, axis)
@@ -1058,9 +1073,26 @@ class Inversion:
         return self.oceanModel.TOA()
     
     @log
-    def m_i(self):
-        return self.oceanModel.m_i
-            
+    def state(self, target='seabed'):
+        if target == 'seabed':
+            return self.oceanModel.seabed_state()
+        elif target == 'thermocline':
+            return self.oceanModel.thermo_state()
+        else:
+            raise Exception ('wrong target in state')
+
+    def state_priori(self, target='seabed'):
+        if target == 'seabed':
+            return self.state_seabed_priori
+        elif target == 'thermocline':
+            return self.state_thermo_priori
+        else:
+            raise Exception ('wrong target in state_priori')
+
+    @log
+    def mt_i(self):
+        return self.oceanModel.mt_i()
+    
     @log
     def check_points(self, points):
         too_high_idx = points > self.oceanModel.v_span()
@@ -1456,8 +1488,7 @@ class Inversion:
         set_tick_fontsize(ax3)
         
         return fig
-
-            
+ 
 class OceanModel:
     """
     Contains: 
@@ -1583,8 +1614,11 @@ class OceanModel:
         idx = np.argmin(t_ax)
         return min(t_ax), self.dense_horizontal_ax[idx]
 
-    def m_i(self):
+    def seabed_state(self):
         return self.seabed_spline.coordinates()[1]
+    
+    def thermo_state(self):
+        return self.thermocline_spline.coordinates()[1]
     
 #    @log
 #    def minimize2(self, x0):
