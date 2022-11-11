@@ -1,4 +1,5 @@
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from scipy.ndimage import gaussian_filter as gaussian
 from scipy.interpolate import PchipInterpolator
 from matplotlib.cm import ScalarMappable
 import matplotlib.gridspec as gridspec
@@ -16,10 +17,11 @@ import os
 import re
 
 cmap=plt.get_cmap('Blues')
-label_fontsize = 15
+label_fontsize = 18
 title_fontsize = 20
-tick_fontsize = 20
+markersize_big = 20
 markersize = 15
+markersize_small = 6
 linewidth = 5
 linewidth_thin = 2.5
 tick_fontsize = 15
@@ -429,7 +431,7 @@ def plot_travel_routes(oceanModel, source_ids, receiver_ids, title=None):
                 continue
             
             source = oceanModel.source_eikonal(i)
-            receiver = oceanModel.receiver_eikonal(i, j)
+            receiver = oceanModel.receiver_eikonal(j)
 #            midpoint = (source_point + receiver_point) * 0.5
             oceanModel.set_T(source, receiver)
             _, h_point = oceanModel.minimize(False)
@@ -445,43 +447,46 @@ def plot_travel_routes(oceanModel, source_ids, receiver_ids, title=None):
     return fig
                 
 @log
-def plot_oceanModel(oceanModel, title=None, jacobian=None):
+def plot_oceanModel(oceanModel, title=None, jacobian=None, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
+    else:
+        fig = ax.figure
+
+    # Get sources, receivers and seabed 
     sources = oceanModel.coordinates2index(oceanModel.sources)
     receivers = oceanModel.coordinates2index(oceanModel.receivers)
-    
-    fig, ax = plt.subplots(1, 1)
-    
-#    h_full = np.linspace(0, oceanModel.h_span())
-#    v_full = oceanModel.seabed_spline(h_full)
-#    h_spline = oceanModel.seabed_spline.horizontal_0
-#    v_spline = oceanModel.seabed_spline(h_spline)
     h_full, v_full = oceanModel.seabed_spline.coordinate_idxs()
-    h_spline, v_spline = oceanModel.seabed_spline.coordinates()
-    
-#    ax.imshow(oceanModel.oceanmodel, aspect='auto', cmap=cmap)
-    im = ax.contourf(oceanModel.oceanmodel, cmap=cmap)
+    h_spline, v_spline = oceanModel.seabed_spline.coordinates()    
+    ht_spline, vt_spline = oceanModel.thermocline_spline.coordinates()    
+
+    # Plot seabed map
+    im = ax.contourf(oceanModel.oceanmodel, cmap=cmap, extent=[])
+    plt.colorbar(im, ax=ax).set_label(label="Propagation speed", size=label_fontsize)
+    # Plot sources and receivers
     ax.plot(sources[:, 0], sources[:, 1], 'or', label="Sources", markersize=markersize, linewidth=linewidth)
     ax.plot(receivers[:, 0], receivers[:, 1], 'ob', label="Receivers", markersize=markersize, linewidth=linewidth)
+    # Plot seabed line
     ax.plot(h_full, v_full, '-', color='black', label="Seabed", markersize=markersize, linewidth=linewidth)
-    ax.plot(h_spline, v_spline, '*k', label="Seabed points", markersize=markersize, linewidth=linewidth)
-    plt.colorbar(im, ax=ax).set_label(label="Propagation speed", size=label_fontsize)
-
-    if title is not None:
-        ax.set_title(title, fontsize=title_fontsize)
-        
+    # Plot spline plints
+    ax.plot(h_spline, v_spline, 'sk', label="Seabed points", markersize=markersize_big, linewidth=linewidth)
+    ax.plot(ht_spline, vt_spline, 'Dk', label="Thermocline points", markersize=markersize_big, linewidth=linewidth)
+            
     if jacobian is not None:
         if len(jacobian) != len(h_spline):
             raise Exception(f"jacobian with len {len(jacobian)} should have len {len(h_spline)}")
-
         for h_i, v_i, j_i in zip(h_spline, v_spline, jacobian):
             ax.plot([h_i, h_i], [v_i, v_i + j_i], '-r', markersize=markersize, linewidth=linewidth)
         ax.plot([h_i, h_i], [v_i, v_i + j_i], '-r', label="Jacobian", markersize=markersize, linewidth=linewidth)
-
+    # Set text
+    if title is not None:
+        ax.set_title(title, fontsize=title_fontsize)
     ax.set_xlim([0, oceanModel.h_span()])
-    ax.set_ylabel("Depth", fontsize=label_fontsize)
-    ax.set_xlabel("Horizontal distance", fontsize=label_fontsize)
+    ax.set_ylabel(r"Depth ($v$)", fontsize=label_fontsize)
+    ax.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
     ax.legend(fontsize=label_fontsize)
     ax.invert_yaxis()
+    set_tick_fontsize(ax)
     fig.tight_layout()
     return fig
 
@@ -510,8 +515,8 @@ def plot_source_receiver(oceanmodel, source, receiver, source_point, receiver_po
     ax0.plot(receiver_point[0], receiver_point[1], '*g', label=receiver_label, markersize=markersize, linewidth=linewidth)
     ax0.plot(h_ax, v_ax, '-k', label="Seabed", markersize=markersize, linewidth=linewidth)
     ax0.plot(h_ax, t_ax, '-b', label="Thermocline", markersize=markersize, linewidth=linewidth)
-    ax0.set_ylabel("Depth", fontsize=label_fontsize)
-    ax0.set_xlabel("Horizontal distance", fontsize=label_fontsize)
+    ax0.set_ylabel(r"Depth ($v$)", fontsize=label_fontsize)
+    ax0.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
     ax0.set_xlim([0, h_ax[-1]])
     fig.colorbar(im0, ax=ax0, orientation='vertical').set_label(label="Time of arrival", size=label_fontsize)
     
@@ -520,8 +525,8 @@ def plot_source_receiver(oceanmodel, source, receiver, source_point, receiver_po
     ax1.plot(receiver_point[0], receiver_point[1], '*g', markersize=markersize, linewidth=linewidth)
     ax1.plot(h_ax, v_ax, '-k', markersize=markersize, linewidth=linewidth)
     ax1.plot(h_ax, t_ax, '-b', markersize=markersize, linewidth=linewidth)
-    ax1.set_ylabel("Depth", fontsize=label_fontsize)
-    ax1.set_xlabel("Horizontal distance", fontsize=label_fontsize)
+    ax1.set_ylabel(r"Depth ($v$)", fontsize=label_fontsize)
+    ax1.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
     ax1.set_xlim([0, h_ax[-1]])
     
     ax2.contourf(receiver, cmap=cmap, vmin=0., vmax=T.max(), levels=np.linspace(receiver.min(), receiver.max(), 25))
@@ -529,7 +534,7 @@ def plot_source_receiver(oceanmodel, source, receiver, source_point, receiver_po
     ax2.plot(receiver_point[0], receiver_point[1], '*g', markersize=markersize, linewidth=linewidth)
     ax2.plot(h_ax, v_ax, '-k', markersize=markersize, linewidth=linewidth)
     ax2.plot(h_ax, t_ax, '-b', markersize=markersize, linewidth=linewidth)
-    ax2.set_xlabel("Horizontal distance", fontsize=label_fontsize)
+    ax2.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
     ax2.set_xlim([0, h_ax[-1]])
     
     fig.colorbar(im1, ax=[ax1, ax2], orientation='vertical').set_label(label="Time of arrival", size=label_fontsize)
@@ -565,7 +570,6 @@ def plot_time(oceanModel, source, receiver, h_source, h_receiver):
     t_start = np.min(t_ax[h_start:h_end]) * 0.998
     t_end = np.max(t_ax[h_start:h_end])
 
-
     largest_endpoint = max(t_ax[h_start], t_ax[h_end])
     largest_value = max(t_ax[h_start:h_end+1])
     if largest_endpoint == largest_value:
@@ -582,7 +586,7 @@ def plot_time(oceanModel, source, receiver, h_source, h_receiver):
 
     ax_sr.plot(h_ax, s_ax, ':r', markersize=markersize, linewidth=linewidth, label="Source")
     ax_sr.plot(h_ax, r_ax, ':b', markersize=markersize, linewidth=linewidth, label="Receiver")
-    ax_sr.set_xlabel("Horizontal distance", fontsize=label_fontsize)
+    ax_sr.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
     ax_sr.set_ylabel("Propagation time", fontsize=label_fontsize)
     ax_sr.axvline(h_source, color='red', label="Source position")
     ax_sr.axvline(h_receiver, color='blue', label="Receiver position")
@@ -628,7 +632,7 @@ def plot_time(oceanModel, source, receiver, h_source, h_receiver):
 #
 #    ax_sr.plot(h_ax, s_ax, ':r', markersize=markersize, linewidth=linewidth, label="Source")
 #    ax_sr.plot(h_ax, r_ax, ':b', markersize=markersize, linewidth=linewidth, label="Receiver")
-#    ax_sr.set_xlabel("Horizontal distance", fontsize=label_fontsize)
+#    ax_sr.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
 #    ax_sr.set_ylabel("Propagation time", fontsize=label_fontsize)
 #    ax_sr.legend(fontsize=label_fontsize)
 #    
@@ -662,14 +666,17 @@ def plot_optimization(oceanmodel, title=None):
         fig.suptitle(title, fontsize=title_fontsize)
         plt.pause(0.3)
     
-def plot_TOA(oceanmodel):
+def plot_TOA(oceanmodel, sigma=0.01):
+    if not oceanmodel.is_initialized:
+        oceanmodel.initialize()
     toas = oceanmodel.TOA()
     toas = toas.reshape([len(oceanmodel.sources), len(oceanmodel.receivers)])
     r_ax = np.arange(len(toas)) + 1
     
     fig, ax = plt.subplots(1, 1)
     for i, toa in enumerate(toas):
-        ax.plot(r_ax, toa, 'o-', label=f"Receiver {i+1}", markersize=markersize, linewidth=linewidth)
+        ax.errorbar(r_ax, toa, yerr=sigma, marker='o', label=f"Receiver {i+1}", markersize=5, linewidth=linewidth)
+#        ax.plot(r_ax, toa, 'o-', label=f"Receiver {i+1}", markersize=markersize, linewidth=linewidth)
     ax.set_xlabel("Source nbr", fontsize=label_fontsize)
     ax.set_ylabel("(T)ime (O)f (A)rrival", fontsize=label_fontsize)
     ax.set_title("Data produced by forward model", fontsize=title_fontsize)
@@ -806,7 +813,7 @@ Inversion
 class Inversion:
     
     @log
-    def __init__(self, oceanModel, true_oceanModel, sigmas=None, C_M=None, verbose=True):#, verbose_plot_progress=True):
+    def __init__(self, oceanModel, true_oceanModel, sigmas=None, C_M=None, C_M_thermo=None, verbose=True):#, verbose_plot_progress=True):
         # Settable variables
         self.oceanModel = oceanModel
         self.seabed_horizontal, self.state_seabed_priori = oceanModel.seabed_spline.coordinates()
@@ -814,7 +821,8 @@ class Inversion:
 #        self.cs = []
 #        self.inversion_history = []
         self.get_covariance_inv(sigmas)
-        self.C_M_inv = np.linalg.inv(np.diag(C_M))
+        self.C_M_seabed_inv = np.linalg.inv(np.diag(C_M))
+        self.C_M_thermo_inv = np.linalg.inv(np.diag(C_M_thermo))
 
         # Internal variables
 #        self.true_toa = None
@@ -826,8 +834,9 @@ class Inversion:
 #        self.ratio = []
 #        self.cs = []
 #        self.inversion_history = []
+        self.errors = []
         self.cs = [self.Cost()]
-        self.inversion_history = [np.concatenate((oceanModel.seabed_spline.coordinates()[1], oceanModel.thermocline_spline.coordinates()[1]))]
+        self.inversion_history = [np.concatenate((oceanModel.seabed_state(), oceanModel.thermo_state()))]
         self.data = []
         
     @log
@@ -837,26 +846,35 @@ class Inversion:
 
     @log
     def quasi_Newton(self, dv=3., target='seabed'):
-        G = self.get_G(dv, target=target)    # +- 10^-5
+        G = self.get_G(dv, target=target)
         
         d_d = self.get_TOA() - self.true_toa
         d_m = self.state(target) - self.state_priori(target)
+#        d_m *= 0
         
         T = G.T @ self.C_D_inv
-        covariance = np.linalg.inv(T @ G + self.C_M_inv)
+        covariance = np.linalg.inv(T @ G + self.C_M_inv(target))
         t_data = T @ d_d
-        t_model = self.C_M_inv @ d_m
+        t_model = self.C_M_inv(target) @ d_m
         self.data.append([covariance, t_data, t_model])
         return  covariance @ (t_data + t_model)
     
     @log
-    def posteriori_covariance(self, dv=3, G=None, target='seabed'):
-        if G is None:
-            G = self.get_G(dv, target=target)    # +- 10^-5
+    def posteriori_covariance(self, dv=3):
+        self.print_message("Calculating posterior covariance ...")
+        G, m_full = self.get_G_full(dv)             # (100 x 14)
                 
-        T = G.T @ self.C_D_inv                  
-        T_0 = T @ G                             
-        return np.linalg.inv(T_0 + self.C_M_inv) 
+        T = G.T @ self.C_D_inv                      # (14 x 100) (100 x 100) = (14 x 100)
+        T_0 = T @ G                                 # (14 x 100) (100 x 14) = (14 x 14)
+        
+        C_seabed = self.C_M_inv('seabed'); ns = C_seabed.shape[0]
+        C_thermo = self.C_M_inv('thermocline'); nt = C_thermo.shape[0]
+        C = np.zeros([ns+nt, ns+nt])
+        C[:ns, :ns] = C_seabed
+        C[ns:, ns:] = C_thermo                      # (14 x 14)
+        self.print_message("... Finished calculating posterior covariance")
+        
+        return np.linalg.inv(T_0 + C), m_full       # (14 x 14) + (14 x 14)
     
     @log
     def get_G(self, dv, target='seabed'):
@@ -870,12 +888,34 @@ class Inversion:
             toa_plus = self.get_TOA()
             self.set_spline(m_i - dv_ax, target=target)
             toa_minus = self.get_TOA()
-            G[:, i] = (toa_plus - toa_minus) / dv
+            G[:, i] = (toa_plus - toa_minus) / (2*dv)
         self.set_spline(m_i, target=target)
         return G
 
     @log
-    def derivative(self, x, dv, cost0, target='seabed'):
+    def get_G_full(self, dv):
+        m_seabed = self.state('seabed')
+        m_thermo = self.state('thermocline')
+        n = len(m_seabed)
+        m_i = np.concatenate((m_seabed, m_thermo))
+        dv_ax = np.zeros(len(m_i))
+        G = np.zeros([len(self.true_toa), len(m_i)])
+        for i in range(len(m_i)):
+            dv_ax[i-1] = 0.
+            dv_ax[i] = dv
+            self.set_spline(m_i[:n] + dv_ax[:n], target='seabed')
+            self.set_spline(m_i[n:] + dv_ax[n:], target='thermocline')
+            toa_plus = self.get_TOA()
+            self.set_spline(m_i[:n] - dv_ax[:n], target='seabed')
+            self.set_spline(m_i[n:] - dv_ax[n:], target='thermocline')
+            toa_minus = self.get_TOA()
+            G[:, i] = (toa_plus - toa_minus) / dv
+        self.set_spline(m_i[:n], target='seabed')
+        self.set_spline(m_i[n:], target='thermocline')
+        return G, m_i
+
+    @log
+    def derivative(self, x, dv, target='seabed'):
         return self.quasi_Newton(dv, target=target) # !!!        
 
     @log 
@@ -923,26 +963,22 @@ class Inversion:
         seabed_i = self.state('seabed')
         
         new_seabed = np.copy(seabed_i)
-        thermo_i = self.oceanModel.thermocline_spline.coordinates()[1]
+        thermo_i = self.oceanModel.thermo_state()
         new_thermo = np.copy(thermo_i)
 
 #        self.cs = [self.Cost()]
 #        self.inversion_history = [np.concatenate((seabed_i, thermo_i))]
         self.switch_idx = 0
         self.transition_iter = transition_iter
+        start_iter = len(self.cs) - 1
         
         self.print_message("Beginning optimization")
         i = 0
         max_iter = seabed_iter
-        while i <= max_iter:
-            cost = self.Cost()
-            
-            if cost > 5*10**4:
-                break
-
+        while i <= max_iter:           
             # Check if optimization should switch to Transition phase
             if optimize_seabed:
-                switch_to_thermocline = self.switching_criteria() or i >= max_iter
+                switch_to_thermocline = self.switching_criteria(start_iter) or i >= max_iter
                 if switch_to_thermocline and i >= min_iter:
                     self.print_message("")
                     self.print_message(f"Switching to Transition after {i} iterations")
@@ -963,51 +999,41 @@ class Inversion:
                 i = 0
 
             # Check if optimization should terminate
-            if optimize_thermocline and self.switching_criteria(seabed_iter + transition_iter):
+            if optimize_thermocline and self.switching_criteria(start_iter + seabed_iter + transition_iter):
                 self.print_message("")
                 self.print_message(f"Terminating optimization after {i} iterations because of inactivity")
                 self.select_best_seabed()
                 break
 
-            # Seabed optimization
-            if optimize_seabed or transition_phase:
-                self.print_message(f"{i} | Optimizing seabed at idx {i} of {max_iter} | Cost={cost:.5}")
-                der_seabed = self.derivative(seabed_i, variation_seabed, cost, target='seabed')
-                new_seabed = seabed_i - der_seabed * alpha_seabed
-#                new_seabed = seabed_i - der_seabed * alpha_seabed # !!!
-                self.set_spline(new_seabed, 'seabed')
-#                self.data.append([i, der_seabed])
-
             # Thermocline optimization
             if optimize_thermocline:
-                break
-                self.print_message(f"Optimizing thermocline at idx {i} of {max_iter}")
-                der_thermo = self.derivative(thermo_i, variation_thermocline, cost, target='thermocline')
+                self.print_message(f"Optimizing thermocline at idx {i} of {max_iter} | Cost={self.cs[-1]:.5}")
+                der_thermo = self.derivative(thermo_i, variation_thermocline, target='thermocline')
                 new_thermo = thermo_i - der_thermo * alpha_thermo
                 self.set_spline(new_thermo, 'thermocline')
-#                self.data.append([i, der_thermo])
                     
+            # Seabed optimization
+            if optimize_seabed or transition_phase or optimize_thermocline:
+                self.print_message(f"Optimizing seabed at idx {i} of {max_iter} | Cost={self.cs[-1]:.5}")
+                der_seabed = self.derivative(seabed_i, variation_seabed, target='seabed')
+                new_seabed = seabed_i - der_seabed * alpha_seabed
+                self.set_spline(new_seabed, 'seabed')
+
+            # Update newest state
+            seabed_i = self.oceanModel.seabed_state()
+            thermo_i = self.oceanModel.thermo_state()
+            
+            # Save and plot step
+            self.cs.append(self.Cost())
+            self.inversion_history.append(np.concatenate((seabed_i, thermo_i)))
+            self.errors.append(self.get_errors())
+
             if plot_optimization:
                 self.plot_during_inversion(seabed_i, new_seabed, thermo_i, new_thermo, i, axis)
             
-            # Update newest state
-            seabed_i = self.oceanModel.seabed_spline.coordinates()[1]
-            thermo_i = self.oceanModel.thermocline_spline.coordinates()[1]
-            
-            # Save and plot step
-            self.cs.append(cost)
-            self.inversion_history.append(np.concatenate((seabed_i, thermo_i)))
-
             i += 1
 #                    break
         print("FINISHED!")
-        if optimize_seabed:
-            print(f"{i} of {max_iter} | optimize_seabed")
-        if transition_phase:
-            print(f"{i} of {max_iter} | transition_phase")
-        if optimize_thermocline:
-            print(f"{i} of {max_iter} | optimize_thermocline")
-        
         self.best_idx = np.argmin(self.cs)
         self.best_c = self.cs[self.best_idx]
         self.best_model = self.inversion_history[self.best_idx]
@@ -1022,7 +1048,7 @@ class Inversion:
         elif target == 'thermocline':
             self.oceanModel.set_thermocline_spline((self.thermocline_horizontal, points))
         else:
-            raise Exception ('wrong target in derivative')
+            raise Exception ('wrong target in set_spline')
 
     @log
     def select_best_seabed(self):
@@ -1045,29 +1071,58 @@ class Inversion:
         if (len(self.cs[start:]) < 3):
             return False
 
-        S = np.array([np.std(self.cs[start:i+1]) * np.sqrt(i) for i in range(start, len(self.cs))])
-        dS = diff1d(S)
-        if dS[-1] < 0:
-            self.print_message("Switching criteria met!")
-            self.print_message(dS)
-        return dS[-1] < 0
+        cs = np.log10(self.cs[start:])
+        cs_blur = gaussian(cs, 1)
+        cs_diff = diff1d(cs_blur)
+        pos = cs_diff > 0
+        neg = cs_diff <= 0
+        if neg.all():
+            return False
+
+        ax = np.arange(len(cs))        
+        plt.figure()
+        plt.subplot(2, 1, 1)
+        plt.plot(ax, cs, ':r')
+        plt.plot(ax, cs_blur, ':b')
+        plt.axvline(ax[np.argmax(pos)], color='red')
+        plt.subplot(2, 1, 2)
+        plt.plot(ax, cs_diff, '-k')
+        plt.plot(ax[neg], cs_diff[neg], '.g')
+        plt.plot(ax[pos], cs_diff[pos], '.r')
+        plt.axvline(ax[np.argmax(pos)], color='red')
+        plt.pause(0.01)
+        return True
+#        S = np.array([np.std(self.cs[start:i+1]) * np.sqrt(i) for i in range(start, len(self.cs))])
+#        dS = diff1d(S)
+#        if dS[-1] < 0:
+#            self.print_message("Switching criteria met!")
+#            self.print_message(dS)
+#        return dS[-1] < 0
     
     @log
     def Cost(self):
         test_data = self.get_TOA()
         diff = (test_data - self.true_toa).reshape([1, -1])
         return (diff @ self.C_D_inv @ diff.T)[0, 0]
-#        cost = np.sum(diff ** 2)
-#        sqrt_cost = np.sqrt(cost)
-#        return sqrt_cost
-#    
+
+    def get_error(self, target='seabed'):        
+        d_m = (self.state(target) - self.state_true(target)).reshape([-1, 1])
+        res_0 = (d_m.T @ self.C_M_inv(target) @ d_m)
+        res_1 = d_m.T @ d_m
+        return res_0[0, 0], res_1[0, 0]
+
+#    def get_error(self, target='seabed'):        
+#        d_m = (self.state(target) - self.state_true(target)).reshape([-1, 1])
+#        res_0 = (d_m.T @ self.C_M_inv @ d_m)
+#        res_1 = d_m.T @ d_m
+#        return res_0[0, 0], res_1[0, 0]
+    
+    def get_errors(self):
+        return self.get_error('seabed'), self.get_error('thermocline')
+
     @log
     def get_TOA(self):
-        if (self.oceanModel.is_initialized):
-#            self.print_message("Internal model already initialized")
-            pass
-        else:
-#            self.print_message("Initializing internal model")
+        if not self.oceanModel.is_initialized:
             self.oceanModel.initialize()
             
         return self.oceanModel.TOA()
@@ -1089,6 +1144,22 @@ class Inversion:
         else:
             raise Exception ('wrong target in state_priori')
 
+    def state_true(self, target='seabed'):
+        if target == 'seabed':
+            return self.true_seabed
+        elif target == 'thermocline':
+            return self.true_thermocline
+        else:
+            raise Exception ('wrong target in state_true')
+
+    def C_M_inv(self, target='seabed'):
+        if target == 'seabed':
+            return self.C_M_seabed_inv
+        elif target == 'thermocline':
+            return self.C_M_thermo_inv
+        else:
+            raise Exception ('wrong target in C_M')
+        
     @log
     def mt_i(self):
         return self.oceanModel.mt_i()
@@ -1131,7 +1202,6 @@ class Inversion:
                 
     @log
     def set_data_from_array(self, item):
-        print("!?!!?!?!?!set_data_from_array!?!!?!?!?!")
         self.print_message("Setting true data from array")
         self.true_toa = item
         
@@ -1149,53 +1219,64 @@ class Inversion:
             
     @log
     def know_the_real_answer(self, true_oceanModel):
-        self.true_seabed = true_oceanModel.seabed_spline.coordinates()[1]
-        self.true_thermocline = true_oceanModel.thermocline_spline.coordinates()[1]
+        self.true_seabed = true_oceanModel.seabed_state()
+        self.true_thermocline = true_oceanModel.thermo_state()
 
-    def plot_reflection_points(self):
+    def plot_reflection_points(self, P=None, v=17.):
+        original_s = self.state('seabed')
+        h_10, s_10 = self.oceanModel.seabed_spline.coordinates()
+        smush = (h_10[1] - h_10[0]) * 0.06
+        h_cheat = h_10.copy()
+        h_cheat[0] += smush
+        h_cheat[-1] -= smush
+        
         y, x = np.histogram(self.oceanModel.List, bins=50)
+        
         h_ax = self.oceanModel.dense_horizontal_ax
         v_ax_test = self.oceanModel.seabed_spline(h_ax, True)
         self.set_spline(self.true_seabed)
         v_ax_true = self.oceanModel.seabed_spline(h_ax, True)
-        self.set_spline(self.inversion_history[0][:10])
-        v_ax_initial = self.oceanModel.seabed_spline(h_ax, True)
-        self.set_spline(self.inversion_history[-1][:10])
+        self.set_spline(original_s)
+        
+#        sigma_seabed = abs(P[:len(original_s), :]).sum(axis=1) ** 0.5
+        sigma_seabed = self.get_std(P, target='seabed')
         
         fig = plt.figure()
+        fig.tight_layout()
         fig.subplots_adjust(hspace=0)
         gs = gridspec.GridSpec(4, 1)
         
         ax0 = fig.add_subplot(gs[0:2, 0])
         ax0.bar((x[1:] + x[:-1])/2, y, width = (x[1]-x[0])*0.9, color='black')
         ax0.xaxis.set_visible(False)
-        ax0.set_ylabel("Count", fontsize=label_fontsize)
-        ax0.set_title("Points of reflection on seabed", fontsize=title_fontsize)
+        ax0.set_ylabel("Points of reflection on seabed", fontsize=label_fontsize)
+        ax0.set_title("Reflection points' effect on model error", fontsize=title_fontsize)
         set_tick_fontsize(ax0)
         ax0.set_xlim([h_ax[0], h_ax[-1]])
         
         ax1 = fig.add_subplot(gs[2, 0])
-        ax1.plot(h_ax, v_ax_initial, '-k', linewidth=linewidth, label="Initial seabed")
-        ax1.plot(h_ax, v_ax_true, '-b', linewidth=linewidth, label="True seabed")
+        ax1.plot(h_ax, v_ax_true, '-k', linewidth=linewidth, label="True seabed")
         ax1.plot(h_ax, v_ax_test, '-r', linewidth=linewidth, label="Recovered seabed")
         ax1.invert_yaxis()
         ax1.xaxis.set_visible(False)
-        ax1.set_ylabel("Depth", fontsize=label_fontsize)
+        ax1.set_ylabel(r"Depth ($v$)", fontsize=label_fontsize)
         ax1.legend(fontsize=label_fontsize)
         set_tick_fontsize(ax1)
         ax1.set_xlim([h_ax[0], h_ax[-1]])
         
         ax2 = fig.add_subplot(gs[3, 0])
-        ax2.plot(h_ax, v_ax_true - v_ax_test, '-k', linewidth=linewidth, label="Error")
-        ax2.plot(h_ax, np.zeros_like(h_ax), ':k', linewidth=linewidth)
+        ax2.plot(h_ax, np.zeros_like(h_ax), '-k', linewidth=linewidth_thin)
+        ax2.plot(h_ax, v_ax_true - v_ax_test, '-r', linewidth=linewidth, label="Error and std")
+        ax2.errorbar(h_cheat, self.true_seabed - s_10, yerr=sigma_seabed, color='red', linewidth=linewidth, ls='None', zorder=10)
         ax2.invert_yaxis()
-        ax2.set_xlabel("Horizontal distance", fontsize=label_fontsize)
-        ax2.set_ylabel("Depth", fontsize=label_fontsize)
+        ax2.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
+        ax2.set_ylabel(r"Depth ($v$)", fontsize=label_fontsize)
         ax2.legend(fontsize=label_fontsize)
         set_tick_fontsize(ax2)
         ax2.set_xlim([h_ax[0], h_ax[-1]])
         
-
+        return fig
+        
     def plot_during_inversion(self, seabed_i, new_seabed, thermo_i, new_thermo, i, axis):
         if len(self.cs) == 0:
             return
@@ -1216,8 +1297,8 @@ class Inversion:
             ax_seabed.plot(self.seabed_horizontal, new_seabed, '*-b', label=f"v{i+1}")
         if self.true_seabed is not None:
             ax_seabed.plot(self.seabed_horizontal, self.true_seabed, '-k', label="True seabed")
-        ax_seabed.set_xlabel("Horizontal distance")
-#        ax_seabed.set_ylabel("Depth")
+        ax_seabed.set_xlabel(r"Horizontal distance ($h$)")
+#        ax_seabed.set_ylabel(r"Depth ($v$)")
         ax_seabed.legend(fontsize=label_fontsize)
         
         # thermocline curve
@@ -1227,63 +1308,11 @@ class Inversion:
             ax_thermo.plot(self.thermocline_horizontal, new_thermo, '*-r', label=f"Thermocline {i+1}")
         if self.true_thermocline is not None:
             ax_thermo.plot(self.thermocline_horizontal, self.true_thermocline, '-k', label="True, thermocline curve")
-        ax_thermo.set_xlabel("Horizontal distance")
-        ax_thermo.set_ylabel("Depth")
+        ax_thermo.set_xlabel(r"Horizontal distance ($h$)")
+        ax_thermo.set_ylabel(r"Depth ($v$)")
         ax_thermo.legend(fontsize=label_fontsize)
-        
+        ax_thermo.figure.show()
         plt.pause(0.01)
-
-    def plot_cost_around_thermocline(self, true_oceanModel, a_diff=3, w_diff=100, t_diff=100, a_num=12, w_num=12, t_num=12, a_ax_=None, w_ax_=None, t_ax_=None):
-        
-        def get_parameter_ax(p_0, diff, num):
-            a = np.linspace(0, diff, num=num+1)
-            ax1 = p_0 - a[::-1]
-            ax2 = p_0 + a[1:]
-            return np.concatenate((ax1, ax2))
-    
-        errors = []
-        
-        a_0, w_0, t_0 = true_oceanModel.thermocline_spline.coordinates()[1]
-        
-        a_ax = get_parameter_ax(a_0, a_diff, a_num) if a_ax_ is None else a_ax_
-        w_ax = get_parameter_ax(w_0, w_diff, w_num) if w_ax_ is None else w_ax_
-        
-        cost = np.zeros([len(a_ax), len(w_ax)])
-        
-        fig = None
-        for a_idx, a_i in enumerate(a_ax):
-            for w_idx, w_i in enumerate(w_ax):
-                try:
-                    state_i = np.array([a_i, w_i, t_0])
-                    self.oceanModel.set_thermocline_spline(state_i)
-                    
-                    cost_i = self.Cost()
-                    cost[a_idx, w_idx] = cost_i
-                    
-                    print(f"{str((a_idx * len(w_ax) + w_idx + 1) / (len(a_ax) * len(w_ax))*100)[:4]}% | Cost = {cost_i:.4} | (a, w) = ({a_i}, {w_i})")
-                except Exception as e:
-                    errors.append([a_idx, a_i, w_idx, w_i])
-                    print(f"{str((a_idx * len(w_ax) + w_idx + 1) / (len(a_ax) * len(w_ax))*100)[:4]}% | FAILED | ({a_idx}, {w_idx})")
-                    print(e)
-    
-            fig = self.plot_cost_field(cost, a_ax, w_ax, a_0, w_0, fig=fig)
-        
-        return cost, errors, fig, a_ax, w_ax
-
-    def plot_cost_field(self, cost, a_ax, w_ax, a_0=None, w_0=None, fig=None):
-        if fig is None:
-            fig, ax = plt.subplots(1, 1)
-        fig.clear()
-        fig.add_subplot()
-        ax = fig.get_axes()[0]
-        j = cost[cost != 0]
-        im = ax.imshow(cost, extent=[w_ax[0], w_ax[-1], a_ax[-1], a_ax[0]], aspect='auto', vmin=j.min(), vmax=j.max())
-        ax.set_xlabel('Wave number')
-        ax.set_ylabel('Amplitude')
-        ax.plot([w_0], [a_0], '*r', label='True value')
-        plt.colorbar(im)
-        plt.pause(0.01)
-        return fig
 
     @log
     def plot_switching_criteria(self):
@@ -1371,7 +1400,7 @@ class Inversion:
         
         for i, c in enumerate(colors[:seabeds.shape[1]]):
             ax0.plot(seabeds_ax, seabeds[:, i], color=c, linewidth=linewidth)
-        ax0.set_ylabel("Depth", fontsize=label_fontsize)
+        ax0.set_ylabel(r"Depth ($v$)", fontsize=label_fontsize)
         for j, (s, c) in enumerate(zip(self.true_seabed, colors[:seabeds.shape[1]])):
             ax0.plot([seabeds_ax[-1], seabeds_ax[-1]+5], [seabeds[-1, j], s], '--', color=c, label=f"point {j}", linewidth=linewidth)
         ax0.set_title("Seabed optimization", fontsize=title_fontsize)
@@ -1379,7 +1408,7 @@ class Inversion:
         if any_thermo:
             for i, c in enumerate(colors[:thermos.shape[1]]):
                 ax1.plot(thermos_ax, thermos[:, i], color=c, linewidth=linewidth)
-            ax1.set_ylabel("Depth", fontsize=label_fontsize)
+            ax1.set_ylabel(r"Depth ($v$)", fontsize=label_fontsize)
             for j, (t, c) in enumerate(zip(self.true_thermocline, colors[:seabeds.shape[1]])):
                 ax1.plot([thermos_ax[-1], thermos_ax[-1]+5], [thermos[-1, j], t], '--', color=c, label=f"point {j}", linewidth=linewidth)
             ax1.set_title("Thermocline optimization", fontsize=title_fontsize)
@@ -1450,20 +1479,20 @@ class Inversion:
         for i, thermocline_spline in enumerate(history_thermocline):
             alpha = i / len(history_thermocline)
             if i == labeled_idxs[0]:
-                ax1.plot(h_thermo, thermocline_spline[len(h_thermo):], '-k', alpha=alpha, linewidth=linewidth_thin, label="Early iteration")
+                ax1.plot(h_thermo, thermocline_spline[len(h_seabed):], '-k', alpha=alpha, linewidth=linewidth_thin, label="Early iteration")
             elif i == labeled_idxs[1]:
-                ax1.plot(h_thermo, thermocline_spline[len(h_thermo):], '-k', alpha=alpha, linewidth=linewidth_thin, label="Late iteration")
+                ax1.plot(h_thermo, thermocline_spline[len(h_seabed):], '-k', alpha=alpha, linewidth=linewidth_thin, label="Late iteration")
             else:
-                ax1.plot(h_thermo, thermocline_spline[len(h_thermo):], '-k', alpha=alpha, linewidth=linewidth_thin)
-        ax1.plot(h_thermo, self.inversion_history[0][len(h_thermo):], '-', color='gray', linewidth=linewidth_thin, label="First iteration")
+                ax1.plot(h_thermo, thermocline_spline[len(h_seabed):], '-k', alpha=alpha, linewidth=linewidth_thin)
+        ax1.plot(h_thermo, self.inversion_history[0][len(h_seabed):], '-', color='gray', linewidth=linewidth_thin, label="First iteration")
         
         # Plot true and estimated thermocline
         if self.true_thermocline is not None:
             ax1.plot(h_thermo, self.true_thermocline, '-r', linewidth=linewidth_thin, label="True model")
         ax1.plot(h_thermo, self.inversion_history[best_idx][len(h_seabed):], '-b', linewidth=linewidth_thin, label="Recovered thermocline")
         
-        ax1.set_xlabel("Horizontal distance", fontsize=label_fontsize)
-        ax3.set_xlabel("Horizontal distance", fontsize=label_fontsize)
+        ax1.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
+        ax3.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
         ax0.set_ylabel("Depth of Ocean floor", fontsize=label_fontsize)
         ax1.set_ylabel("Depth of Thermocline", fontsize=label_fontsize)
         
@@ -1488,7 +1517,245 @@ class Inversion:
         set_tick_fontsize(ax3)
         
         return fig
- 
+    
+    def plot_inversion_history_3(self):
+        if len(self.cs) == 0:
+            raise Exception("No inversion history found!")
+            
+        n = len(self.seabed_horizontal)
+        switch = self.switch_idx + self.transition_iter
+        
+        data = np.array(self.inversion_history)
+        seabeds = data[:, :n]
+        thermos = data[:, n:]
+        cs = np.array(self.cs)
+        seabeds_ax = np.arange(0, seabeds.shape[0])
+        
+        gs = gridspec.GridSpec(nrows=8, ncols=1)
+        fig = plt.figure()
+        ax0 = fig.add_subplot(gs[0:3, 0])
+        ax1 = fig.add_subplot(gs[3:6, 0], sharex=ax0)
+        ax2 = fig.add_subplot(gs[6:8, 0], sharex=ax1)
+        ax0.xaxis.set_visible(False)
+        ax1.xaxis.set_visible(False)
+        
+        ax0.axvline(switch, color='black')
+        for i, c in enumerate(colors[:thermos.shape[1]]):
+            ax0.plot(seabeds_ax, thermos[:, i], '--D', color=c, linewidth=linewidth, markersize=markersize)
+        for j, (t, c) in enumerate(zip(self.true_thermocline, colors[:seabeds.shape[1]])):
+            ax0.plot([seabeds_ax[-1], seabeds_ax[-1]*1.05], [thermos[-1, j], t], '-D', color=c, linewidth=linewidth, markersize=markersize, label=f"point {j}")
+        ax0.text(seabeds_ax[-1]*1.07, self.true_thermocline.mean()*1.13, "True thermocline", rotation=-90, fontsize=title_fontsize)
+        
+        ax1.axvline(switch, color='black')
+        for i, c in enumerate(colors[:seabeds.shape[1]]):
+            ax1.plot(seabeds_ax, seabeds[:, i], '--s', color=c, linewidth=linewidth, markersize=markersize)
+        for j, (s, c) in enumerate(zip(self.true_seabed, colors[:seabeds.shape[1]])):
+            ax1.plot([seabeds_ax[-1], seabeds_ax[-1]*1.05], [seabeds[-1, j], s], '-s', color=c, linewidth=linewidth, markersize=markersize, label=f"point {j}")
+        ax1.text(seabeds_ax[-1]*1.07, self.true_seabed.mean()*1.09, "True ocean floor", rotation=-90, fontsize=title_fontsize)
+        
+        ax2.axvline(switch, color='black', label="Switch")
+        ax2.semilogy(seabeds_ax, cs, '-o', linewidth=linewidth, markersize=markersize, color='black')
+        ax2.set_ylabel("Misfit", fontsize=label_fontsize)
+        ax2.set_xlabel("Iteration", fontsize=label_fontsize)
+        
+        #fig.tight_layout()
+        fig.subplots_adjust(hspace=0)
+        ax0.invert_yaxis()
+        ax1.invert_yaxis()
+        fig.legend(fontsize=label_fontsize, loc='center right')
+        ax0.set_ylabel(r"hermocline optimization" + "\n" + r"Depth ($v$)", fontsize=label_fontsize)
+        ax1.set_ylabel(r"Seabed optimization" + "\n" + "Depth ($v$)", fontsize=label_fontsize)
+        ax0.set_title("Invertion process", fontsize=title_fontsize)
+        set_tick_fontsize(ax0)
+        set_tick_fontsize(ax1)
+        set_tick_fontsize(ax2)
+
+        
+    
+    def cost_around_true_thermocline(self, diff=10, num=50):
+        dv = np.linspace(-diff, diff, num=num)
+        v = self.state_priori('thermocline')
+        h = self.seabed_horizontal
+        data = np.zeros([len(v), len(dv)])
+        
+        for i, v_i in enumerate(v):
+            for j, dv_j in enumerate(dv):
+                new_v = np.copy(v)
+                new_v[i] = v_i + dv_j
+                
+                self.set_spline(new_v, target="thermocline")
+                data[i, j] = self.Cost()
+                print(data[i, j])
+                
+                plt.clf()
+                plt.imshow(np.log10(data.T), aspect='auto', extent=[h.min(), h.max(), dv.min(), dv.max()])
+                plt.colorbar()
+                plt.ylabel("Variation from true value")
+                plt.xlabel(r"Horizontal distance ($h$)")
+                plt.title(f"{i} of {len(v)}, {j} of {len(dv)}")
+                plt.pause(0.01)
+        return data, dv
+    
+    def get_std(self, P, target='seabed', simple=True):
+        n = len(self.state())
+        if target == 'seabed':
+            if simple:
+                return P.diagonal()[:n] ** 0.5
+            else:
+                return abs(P[:n, :]).sum(axis=1) ** 0.5
+        elif target == 'thermocline':
+            if simple:
+                return P.diagonal()[n:] ** 0.5
+            else:
+                return abs(P[n:, :]).sum(axis=1) ** 0.5
+        else:
+            raise Exception ("Wrong target in get_std")
+
+    
+    def plot_posteriori_covariance(self, P=None, v=3):
+        
+        def plot_negative(ax, neg):
+            first = True
+            for i in range(14):
+                for j in range(14):
+                    if neg[i, j] == -1:
+                        if first:
+                            ax.scatter(i, j, s=80, facecolors='none', edgecolors='r', label="Negative value")
+                            first=False
+                        else:
+                            ax.scatter(i, j, s=80, facecolors='none', edgecolors='r')
+
+        if P is None:
+            P, _ = self.posteriori_covariance(v)
+
+        neg = np.sign(P)
+        PP = np.log10((P * neg)) 
+#        line = np.sqrt(np.sum(abs(P), axis=0))
+        std_seabed = self.get_std(P, target='seabed')
+        std_thermo = self.get_std(P, target='thermocline')
+        j = self.inversion_history[-1]
+        n = len(self.state())
+        m = len(self.state('thermocline'))
+
+        gs = gridspec.GridSpec(2, 10)
+        fig = plt.figure()
+        fig.tight_layout()
+        ax1 = fig.add_subplot(gs[0, :4])
+        ax2 = fig.add_subplot(gs[1, :4], sharex=ax1)
+        ax = fig.add_subplot(gs[:, 4:9])
+        axcbar = fig.add_subplot(gs[:, -1])
+        ax1.xaxis.set_visible(False)
+        fig.subplots_adjust(hspace=0)
+        fig.subplots_adjust(wspace=5)
+        fig.suptitle("Posterior Covariance", fontsize=25)
+        
+        im = ax.imshow(PP, aspect='auto')
+        cb = fig.colorbar(im, ax=ax, cax=axcbar)
+        cb.set_label(label=r"$log_{10}$(Posterior Covariance)", fontsize=20)
+        cb.ax.tick_params(labelsize=20)
+        ax.plot([-.5, n+m-.5], [n-.5, n-.5], '-', linewidth=5, color='black')
+        ax.plot([n-.5, n-.5], [-.5, n+m-.5], '-', linewidth=5, color='black')
+        ax.set_ylabel("Model parameters", fontsize=20)
+        ax.set_xlabel("Model parameters", fontsize=20)
+        ax.text(3, 0.5, "Ocean floor", fontsize=17, weight='bold', color='black')
+        ax.text(9.8, 10.4, "Thermocline", fontsize=17, weight='bold', color='black')
+        plot_negative(ax, neg)
+        ax.legend()
+        
+        x_axis = np.arange(len(std_seabed) + len(std_thermo))
+#        ax1.semilogy(x_axis[:n], line[:n], 'o-r', markersize=5, linewidth=5)
+#        ax1.semilogy(x_axis[n:], line[n:], 'o-r', markersize=5, linewidth=5)
+        ax1.semilogy(x_axis[:n], std_seabed, 'o-r', markersize=5, linewidth=5)
+        ax1.semilogy(x_axis[n:], std_thermo, 'o-r', markersize=5, linewidth=5)
+        ax1.axvline(n-.5, color='black', linewidth=5)
+#        ax1.set_xlabel("Model parameters", fontsize=20)
+        ax1.set_ylabel(r"$log_{10}$(Posterior Covariance)", fontsize=20)
+        
+        ax2.semilogy(x_axis[:n], abs(j[:n] - self.true_seabed), 'o-r', markersize=5, linewidth=5)
+        ax2.semilogy(x_axis[n:], abs(j[n:] - self.true_thermocline), 'o-r', markersize=5, linewidth=5)
+        ax2.axvline(n-.5, color='black', linewidth=5)
+        ax2.set_xlabel("Model parameters", fontsize=20)
+        ax2.set_ylabel("Model error", fontsize=20)
+        
+        return fig
+
+    def plot_end_result(self, true_oceanModel, P=None, v=13.):
+        if len(self.cs) == 0:
+            raise Exception("No inversion history found!")
+        if P is None:
+            self.print_message("Finding posterior covariance")
+            P, _ = self.posteriori_covariance(v)
+        self.print_message("Plotting figure")
+        h_spline, v_spline = self.oceanModel.seabed_spline.coordinates()    
+        h_full, v_full = self.oceanModel.seabed_spline.coordinate_idxs()
+        ht_spline, vt_spline = self.oceanModel.thermocline_spline.coordinates()
+        ht_full, vt_full = self.oceanModel.thermocline_spline.coordinate_idxs()
+        error_seabed = v_spline - self.true_seabed
+        sigma_seabed = self.get_std(P, target='seabed')
+#        sigma_seabed = abs(P[:len(error_seabed), :]).sum(axis=1) ** 0.5
+        error_thermocline = vt_spline - self.true_thermocline
+#        sigma_thermocline = abs(P[len(error_seabed):, :]).sum(axis=1) ** 0.5
+        sigma_thermocline = self.get_std(P, target='thermocline')
+        h_spline_cheat = h_spline.copy()
+        smush = (h_spline[1] - h_spline[0]) * 0.06
+        h_spline_cheat[0] += smush
+        h_spline_cheat[-1] -= smush
+        ht_spline_cheat = ht_spline.copy()
+        ht_spline_cheat[0] += smush
+        ht_spline_cheat[-1] -= smush
+
+        # Create figure
+        fig = plt.figure()
+        gs = gridspec.GridSpec(5, 1)
+        ax0 = fig.add_subplot(gs[:3, 0])
+        ax1 = fig.add_subplot(gs[3, 0], sharex=ax0)
+        ax2 = fig.add_subplot(gs[4, 0], sharex=ax0)
+        ax0.xaxis.set_visible(False)
+        ax1.xaxis.set_visible(False)
+        
+        # ax0
+        true_oceanModel.plot_oceanmodel(ax=ax0)
+        ax0.get_legend().remove()
+        ax0.plot(h_full, v_full, '-', color='gray', label="Recovered model", linewidth=linewidth_thin)
+        ax0.plot(ht_full, vt_full, '-', color='gray', linewidth=linewidth_thin)
+        ax0.errorbar(ht_spline_cheat, vt_spline, yerr=sigma_thermocline, zorder=10, marker='o', color='gray', label="Recovered model points", markersize=markersize_small, linewidth=linewidth, ls='None', mfc='black')
+        ax0.errorbar(h_spline_cheat, v_spline, yerr=sigma_seabed, zorder=10, marker='o', color='gray', markersize=markersize_small, linewidth=linewidth, ls='None', mfc='black')
+        fig.legend(fontsize=label_fontsize, loc=(0.8, 0.1))
+#        ax0.legend(fontsize=label_fontsize)
+        
+        # ax1
+        ax1.errorbar(h_spline_cheat, error_seabed, yerr=sigma_seabed, linewidth=linewidth, color='black', label="Error and standard deviation")
+        ax1.plot([h_spline[0], h_spline[-1]], [0, 0], color='gray')
+        ax1.legend(fontsize=label_fontsize)
+        
+        # ax2
+        ax2.errorbar(ht_spline_cheat, error_thermocline, yerr=sigma_thermocline, linewidth=linewidth, color='black', label="Error and standard deviation")
+        ax2.plot([ht_spline[0], ht_spline[-1]], [0, 0], color='gray')
+        ax2.legend(fontsize=label_fontsize)
+        
+        # Final touches
+        fig.subplots_adjust(hspace=0.2)
+        right_x_bound = ax0.get_position().get_points()[1, 0]
+        set_tick_fontsize(ax1)
+        set_tick_fontsize(ax2)
+        box = ax1.get_position()
+        points = box.get_points()
+        points[1, 0] = right_x_bound
+        box.set_points(points)
+        ax1.set_position(box)
+        box = ax2.get_position()
+        points = box.get_points()
+        points[1, 0] = right_x_bound
+        box.set_points(points)
+        ax2.set_position(box)
+        ax1.set_ylabel("Ocean floor", fontsize=label_fontsize)
+        ax2.set_ylabel("Thermocline", fontsize=label_fontsize)
+        ax2.set_xlabel(r"Horizontal distance ($h$)", fontsize=label_fontsize)
+        
+        return fig
+        
+
+    
 class OceanModel:
     """
     Contains: 
@@ -1505,12 +1772,11 @@ class OceanModel:
     """
     
     @log
-    def __init__(self, oceanmodel, sources, receivers, times, cwd, hv_seabed_points=None, hv_thermocline_points=None, step_sizes=[0.0007, 0.0007, 0.0007], save_optimization=False, speed_above=1500., speed_below=2000., verbose=True, method='Nelder-Mead'):
+    def __init__(self, oceanmodel, sources, receivers, cwd, hv_seabed_points=None, hv_thermocline_points=None, step_sizes=[0.0007, 0.0007, 0.0007], save_optimization=False, speed_above=1500., speed_below=2000., verbose=True, method='Nelder-Mead'):
         # Settable variables
         self.oceanmodel = np.copy(oceanmodel)
         self.sources = sources
         self.receivers = receivers
-        self.times = times
         self.cwd = cwd
         self.step_sizes = step_sizes
         self.save_optimization = save_optimization
@@ -1585,15 +1851,15 @@ class OceanModel:
         
         results = np.zeros(n * len(receiver_ax))
         
-                
         for i, source_poifnt in enumerate(source_ax):
             for j, receiver_point in enumerate(receiver_ax):
                 
-                self.set_T(self.source_eikonal(i), self.receiver_eikonal(i, j))
+                self.set_T(self.source_eikonal(i), self.receiver_eikonal(j))
                 
 #                v_ax = self.seabed_spline(h_ax)
 #                t_ax = [self.T[v_i, h_i] for h_i, v_i in zip(h_ax, v_ax)]
 #                results[i*n + j] = min(t_ax)
+                T = self.T
                 results[i*n + j] = self.minimize()
 
         self.reset_T()
@@ -1635,29 +1901,17 @@ class OceanModel:
 
     @log
     def write_OceanModelRSF(self):
-        for i, t in enumerate(self.times):
-            self.set_source_time(t)
-            numpy2rsf(self.oceanmodel, self.cwd, f'OceanModel{i}')
+#        for i, t in enumerate(self.times):
+#            self.set_source_time(t)
+#            numpy2rsf(self.oceanmodel, self.cwd, f'OceanModel{i}')
+        self.set_velocity()
+        numpy2rsf(self.oceanmodel, self.cwd, 'OceanModel', d=self.step_sizes)
         self.print_message("Successfully wrote OceanModel.rsf files")
 
-    @log
-    def set_source_time(self, t): #!!! WHAT TO DO?!
-#        self.thermocline_spline.build_spline(t) #!!!
-        self.set_velocity()
-
 #    @log
-#    def get_thermocline_state(self): #!!!
-#        a = self.thermocline_spline.amplitude
-#        w = self.thermocline_spline.wave_length
-#        t = self.thermocline_spline.time_offset
-#        return np.array([a, w, t])
-
-#    @log
-#    def set_thermocline_state(self, a, w, t): #!!!
-#        self.thermocline_spline.amplitude = a
-#        self.thermocline_spline.wave_length = w
-#        self.thermocline_spline.time_offset = t
-#        self.is_initialized = False
+#    def set_source_time(self, t): #!!! WHAT TO DO?!
+##        self.thermocline_spline.build_spline(t) #!!!
+#        self.set_velocity()
 
     @log
     def write_SConstruck(self):
@@ -1665,18 +1919,21 @@ class OceanModel:
         
         lines = ['from rsf.proj import * \n']
         
-        # Fetch OceanModeli.rsf
-        for i in range(len(self.sources)):
-            lines.append(self.write_fetch(i))
+        # Fetch OceanModeli.rsf !!!
+#        for i in range(len(self.sources)):
+#            lines.append(self.write_fetch(i))
+        lines.append('Fetch("OceanModel.rsf", "/home/peter/Desktop/master_project/Madagascar/OceanModel", server = "local") \n')
         
         # Write sources
         for i, source in enumerate(self.sources):
-            lines.append(self.write_flow(f'source{i}', i, source[0], source[1]))
+            lines.append(self.write_flow(f'source{i}', source[0], source[1]))
             
-        # Write receivers
-        for i, source in enumerate(self.sources):
-            for j, receiver in enumerate(self.receivers):
-                lines.append(self.write_flow(f'receiver{i}{j}', i, receiver[0], receiver[1]))
+        # Write receivers !!!
+#        for i, source in enumerate(self.sources):
+#            for j, receiver in enumerate(self.receivers):
+#                lines.append(self.write_flow(f'receiver{i}{j}', i, receiver[0], receiver[1]))
+        for i, receiver in enumerate(self.receivers):
+            lines.append(self.write_flow(f'receiver{i}', receiver[0], receiver[1]))
         
         lines.append("End()")
         
@@ -1686,11 +1943,12 @@ class OceanModel:
         if self.verbose:
             print(f"Successfully wrote {file_name}")
         
-    def write_flow(self, out_name, i, zshot, yshort):
-        return f'Flow("{out_name}", "OceanModel{i}.rsf", "eikonal order={self.order} zshot={zshot} yshot={yshort} br1={self.step_sizes[0]} br2={self.step_sizes[0]}") \n'
+    def write_flow(self, out_name, zshot, yshort):
+        return f'Flow("{out_name}", "OceanModel.rsf", "eikonal order={self.order} zshot={zshot} yshot={yshort} br1={self.step_sizes[0]} br2={self.step_sizes[0]}") \n'
 
-    def write_fetch(self, i):
-        return f'Fetch("OceanModel{i}.rsf", "/home/peter/Desktop/master_project/Madagascar/OceanModel", server = "local") \n'
+    def write_fetch(self):
+        print("!write_fetch")
+        return 'Fetch("OceanModel.rsf", "/home/peter/Desktop/master_project/Madagascar/OceanModel", server = "local") \n'
     
     @log
     def try_scons(self):
@@ -1707,9 +1965,12 @@ class OceanModel:
         self.print_message(f"source{i}.rsf read sucessfully!")
 
     @log
-    def receiver_eikonal(self, i, j):
-        return rsf2numpy(f"receiver{i}{j}.rsf")
-        self.print_message(f"receiver{i}{j}.rsf read sucessfully!")
+    def receiver_eikonal(self, j):
+        return rsf2numpy(f"receiver{j}.rsf")
+        self.print_message(f"receiver{j}.rsf read sucessfully!")
+#    def receiver_eikonal(self, i, j): #!!!
+#        return rsf2numpy(f"receiver{i}{j}.rsf")
+#        self.print_message(f"receiver{i}{j}.rsf read sucessfully!")
             
     @log
     def set_T(self, source, receiver):
@@ -1834,7 +2095,8 @@ class OceanModel:
         
         for i, source_idx in enumerate(self.coordinates2index(self.sources)):
             for j, receiver_idx in enumerate(self.coordinates2index(self.receivers)):
-                source, receiver = self.source_eikonal(i), self.receiver_eikonal(i, j)
+                print(i, j)
+                source, receiver = self.source_eikonal(i), self.receiver_eikonal(j)
                 
                 if i not in source_ids:
                     continue
@@ -1851,7 +2113,7 @@ class OceanModel:
         
         for i, source_point in enumerate(self.coordinates2index(self.sources)):
             for j, receiver_point in enumerate(self.coordinates2index(self.receivers)):
-                source, receiver = self.source_eikonal(i), self.receiver_eikonal(i, j)
+                source, receiver = self.source_eikonal(i), self.receiver_eikonal(j)
 
                 if i not in source_ids:
                     continue
@@ -1860,8 +2122,8 @@ class OceanModel:
                 return plot_source_receiver(self, source, receiver, source_point, receiver_point, self.seabed_spline, f"source {i}", f"receiver {j}")
 
     @log
-    def plot_oceanmodel(self, title=None, jacobian=None):
-        return plot_oceanModel(self, title, jacobian)
+    def plot_oceanmodel(self, title=None, jacobian=None, ax=None):
+        return plot_oceanModel(self, title, jacobian, ax)
     
     @log
     def plot_travel_routes(self, source_ids=None, receiver_ids=None, title=None,):
